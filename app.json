@@ -17,7 +17,14 @@
       "googleServicesFile": "./GoogleService-Info.plist",
       "bundleIdentifier": "com.tdipietro87.cueconnectfirebaseV2",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleURLTypes": [
+          {
+            "CFBundleURLSchemes": [
+              "com.googleusercontent.apps.47513412219-s7h2uea77hgadicf5kti86rl6aifobg9"
+            ]
+          }
+        ]
       }
     },
     "android": {
@@ -58,4 +65,3 @@
     ]
   }
 }
-
