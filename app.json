@@ -13,7 +13,12 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "googleServicesFile": "./GoogleService-Info.plist",
+      "bundleIdentifier": "com.tdipietro87.cueconnectfirebase",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -24,6 +29,33 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "773bd214-8019-440b-bed9-9893cafdcd93"
+      }
+    },
+    "plugins": [
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      "@react-native-firebase/crashlytics",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "useFrameworks": "static"
+          }
+        }
+      ],
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosClientId": "47513412219-2a1er9gtls24st7un3e03ufbvjv7sm2c.apps.googleusercontent.com",
+          "webClientId": "47513412219-jr78i7l12tggq2t46343hnk9uqdcajta.apps.googleusercontent.com",
+          "iosUrlScheme": "com.googleusercontent.apps.47513412219-2a1er9gtls24st7un3e03ufbvjv7sm2c"
+        }
+      ]
+    ]
   }
 }
+
