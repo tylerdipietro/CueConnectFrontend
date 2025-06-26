@@ -1,7 +1,7 @@
 // src/AppContent.tsx
 import React from 'react';
-import { View, Text, Button, StyleSheet, Image } from 'react-native';
-import { useUser } from '../src/services/AuthService'; // Import useUser hook for user info and sign out
+import { View, Text, StyleSheet, Image } from 'react-native';
+import { useUser, AuthService } from '../services/AuthService'; // Import useUser hook and AuthService for the SignOutButton
 
 /**
  * AppContent Component
@@ -10,7 +10,7 @@ import { useUser } from '../src/services/AuthService'; // Import useUser hook fo
  * For now, it shows a welcome message and a sign-out button.
  */
 const AppContent = () => {
-  const { user, signOutUser } = useUser(); // Access user and signOutUser from context
+  const { user, signOut } = useUser(); // Corrected: Access 'signOut' from context, not 'signOutUser'
 
   if (!user) {
     // This case should ideally not happen if App.tsx is handling routing correctly,
@@ -18,7 +18,9 @@ const AppContent = () => {
     return (
       <View style={styles.container}>
         <Text>User not found. Please sign in.</Text>
-        <Button title="Go to Sign In" onPress={signOutUser} />
+        {/* It's better to navigate to AuthScreen here or have App.tsx handle it */}
+        {/* For demonstration, keeping a signOut button but it won't do much if user is null */}
+        <AuthService.SignOutButton onSignOut={signOut} />
       </View>
     );
   }
@@ -41,7 +43,8 @@ const AppContent = () => {
         {/* We will add more UI elements for your app's features here */}
       </View>
 
-      <Button title="Sign Out" onPress={signOutUser} />
+      {/* Using the styled SignOutButton from AuthService */}
+      <AuthService.SignOutButton onSignOut={signOut} />
     </View>
   );
 };
