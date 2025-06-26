@@ -25,7 +25,7 @@ const App = (): JSX.Element => { // Explicitly define the return type as JSX.Ele
   // 1. Configure Google Sign-In
   useEffect(() => {
     GoogleSignin.configure({
-      webClientId: '47513412219-nqkiaarisrql1cbjrb7c9a95f12f7r4v.apps.googleusercontent.com', // REQUIRED for backend auth
+      webClientId: '47513412219-jr78i7l12tggq2t46343hnk9uqdcajta.apps.googleusercontent.com', // REQUIRED for backend auth
       iosClientId: '47513412219-s7h2uea77hgadicf5kti86rl6aifobg9.apps.googleusercontent.com',
     });
   }, []); // Empty dependency array means this runs once on mount
