@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CLIENT_ID</key>
-	<string>47513412219-2a1er9gtls24st7un3e03ufbvjv7sm2c.apps.googleusercontent.com</string>
+	<string>47513412219-s7h2uea77hgadicf5kti86rl6aifobg9.apps.googleusercontent.com</string>
 	<key>REVERSED_CLIENT_ID</key>
-	<string>com.googleusercontent.apps.47513412219-2a1er9gtls24st7un3e03ufbvjv7sm2c</string>
+	<string>com.googleusercontent.apps.47513412219-s7h2uea77hgadicf5kti86rl6aifobg9</string>
 	<key>API_KEY</key>
 	<string>AIzaSyDB9YQAodicauPpUSepY0jermYnocJvtMQ</string>
 	<key>GCM_SENDER_ID</key>
@@ -13,7 +13,7 @@
 	<key>PLIST_VERSION</key>
 	<string>1</string>
 	<key>BUNDLE_ID</key>
-	<string>com.tdipietro87.cueconnectfirebase</string>
+	<string>com.tdipietro87.cueconnectfirebaseV2</string>
 	<key>PROJECT_ID</key>
 	<string>cueconnectfirebase</string>
 	<key>STORAGE_BUCKET</key>
@@ -29,7 +29,6 @@
 	<key>IS_SIGNIN_ENABLED</key>
 	<true></true>
 	<key>GOOGLE_APP_ID</key>
-	<string>1:47513412219:ios:d64911e5699bb4e0e038de</string>
+	<string>1:47513412219:ios:41f2f725873322b4e038de</string>
 </dict>
 </plist>
-
