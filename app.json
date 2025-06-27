@@ -24,15 +24,10 @@
               "com.googleusercontent.apps.47513412219-s7h2uea77hgadicf5kti86rl6aifobg9"
             ]
           }
-        ]
+        ],
+        "NSLocationWhenInUseUsageDescription": "Allow CueConnect to access your location when using the app to find nearby pool tables and venues.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow CueConnect to always access your location to find nearby pool tables and provide updates, even when the app is in the background."
       }
-    },
-    "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -43,6 +38,7 @@
       }
     },
     "plugins": [
+      "expo-location", 
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
       "@react-native-firebase/crashlytics",
