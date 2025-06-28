@@ -45,6 +45,16 @@ interface Venue {
   numberOfTables?: number;
 }
 
+interface Table {
+  _id: string;
+  venueId: string;
+  tableNumber: string | number;
+  esp32DeviceId?: string;
+  status: 'available' | 'occupied' | 'queued' | 'maintenance';
+  currentSessionId?: string;
+  queue: string[];
+}
+
 // Backend base URL
 const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
 
@@ -67,13 +77,17 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
   const [newVenueTablesCount, setNewVenueTablesCount] = useState<string>('');
   const [isRegisteringVenue, setIsRegisteringVenue] = useState<boolean>(false);
 
-  // State for new table registration form
+  // State for editing specific table
   const [allVenues, setAllVenues] = useState<Venue[]>([]);
+  const [tablesForSelectedVenue, setTablesForSelectedVenue] = useState<Table[]>([]);
   const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
-  const [newTableNumber, setNewTableNumber] = useState<string>('');
-  const [newEsp32DeviceId, setNewEsp32DeviceId] = useState<string>('');
-  const [isRegisteringTable, setIsRegisteringTable] = useState<boolean>(false);
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null); // New state for selected table
+  const [editTableNumber, setEditTableNumber] = useState<string>(''); // For editing table number
+  const [editEsp32DeviceId, setEditEsp32DeviceId] = useState<string>(''); // For editing ESP32 ID
+  const [isEditingTable, setIsEditingTable] = useState<boolean>(false);
   const [isLoadingVenuesForAdmin, setIsLoadingVenuesForAdmin] = useState<boolean>(false);
+  const [isLoadingTablesForEdit, setIsLoadingTablesForEdit] = useState<boolean>(false);
+
 
   // Function to fetch user's current location
   const requestLocationPermissionAndGetLocation = useCallback(async () => {
@@ -190,6 +204,7 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
 
       const data: Venue[] = await response.json();
       setAllVenues(data);
+      // Automatically select the first venue if available
       if (data.length > 0 && !selectedVenueId) {
         setSelectedVenueId(data[0]._id);
       }
@@ -201,7 +216,7 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
     } finally {
       setIsLoadingVenuesForAdmin(false);
     }
-  }, [user, selectedVenueId]);
+  }, [user, selectedVenueId]); // Add selectedVenueId to dependency to prevent re-fetching on initial load if already set
 
   // Fetch all venues when admin panel is shown and user is ready
   useEffect(() => {
@@ -209,6 +224,75 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
       fetchAllVenuesForAdmin();
     }
   }, [user?.isAdmin, fetchAllVenuesForAdmin]);
+
+  // Effect to fetch tables for the currently selected venue
+  const fetchTablesForSelectedVenue = useCallback(async () => {
+    if (!selectedVenueId || !user) {
+      setTablesForSelectedVenue([]); // Clear tables if no venue selected
+      setSelectedTableId(null); // Clear selected table
+      setEditTableNumber('');
+      setEditEsp32DeviceId('');
+      return;
+    }
+
+    setIsLoadingTablesForEdit(true);
+    try {
+      const idToken = await user.getIdToken(true);
+      const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${selectedVenueId}/tables`, {
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        let errorMessage = `HTTP error! status: ${response.status}. Message: ${errorData}`;
+        try {
+            const jsonError = JSON.parse(errorData);
+            errorMessage = jsonError.message || errorMessage;
+        } catch (e) {
+            // Not JSON, use raw text
+        }
+        throw new Error(errorMessage);
+      }
+      const data: Table[] = await response.json();
+      setTablesForSelectedVenue(data);
+      console.log(`[API] Tables fetched for venue ${selectedVenueId}:`, data);
+
+      // Automatically select the first table if available
+      if (data.length > 0 && !selectedTableId) {
+        setSelectedTableId(data[0]._id);
+      } else if (data.length === 0) {
+        setSelectedTableId(null);
+      }
+    } catch (error: any) {
+      console.error('Error fetching tables for selected venue:', error);
+      Alert.alert('Error', `Failed to load tables for editing: ${error.message}`);
+      setTablesForSelectedVenue([]);
+      setSelectedTableId(null);
+    } finally {
+      setIsLoadingTablesForEdit(false);
+    }
+  }, [selectedVenueId, user, selectedTableId]); // Add selectedTableId to prevent re-fetching if already set
+
+  // Re-fetch tables for selected venue whenever selectedVenueId or user changes
+  useEffect(() => {
+    fetchTablesForSelectedVenue();
+  }, [fetchTablesForSelectedVenue]);
+
+  // Effect to populate edit fields when selectedTableId changes
+  useEffect(() => {
+    if (selectedTableId) {
+      const tableToEdit = tablesForSelectedVenue.find(t => t._id === selectedTableId);
+      if (tableToEdit) {
+        setEditTableNumber(String(tableToEdit.tableNumber));
+        setEditEsp32DeviceId(tableToEdit.esp32DeviceId || '');
+      }
+    } else {
+      setEditTableNumber('');
+      setEditEsp32DeviceId('');
+    }
+  }, [selectedTableId, tablesForSelectedVenue]);
 
 
   // Handle new venue registration
@@ -252,8 +336,8 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
       setNewVenueName('');
       setNewVenueAddress('');
       setNewVenueTablesCount('');
-      fetchAllVenuesForAdmin();
-      fetchNearbyVenues();
+      fetchAllVenuesForAdmin(); // Re-fetch all venues to update the picker
+      fetchNearbyVenues(); // Re-fetch nearby venues as a new one might be close
     } catch (error: any) {
       console.error('Venue registration error:', error);
       Alert.alert('Registration Failed', `Error: ${error.message}`);
@@ -262,50 +346,52 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
     }
   };
 
-  // Handle new table registration
-  const handleRegisterTable = async () => {
+  // Handle editing an existing table
+  const handleEditTable = async () => {
     if (!user) {
       Alert.alert('Authentication Error', 'User not authenticated.');
       return;
     }
-    if (!selectedVenueId || !newTableNumber || !newEsp32DeviceId) {
-      Alert.alert('Missing Information', 'Please select a venue and fill in table number and ESP32 Device ID.');
+    if (!selectedTableId) {
+      Alert.alert('Selection Error', 'Please select a table to edit.');
+      return;
+    }
+    if (!editTableNumber && !editEsp32DeviceId) {
+      Alert.alert('Input Error', 'Please provide a new table number or ESP32 Device ID.');
       return;
     }
 
-    setIsRegisteringTable(true);
+    setIsEditingTable(true);
     try {
       const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/tables`, {
-        method: 'POST',
+      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${selectedTableId}`, {
+        method: 'PUT', // Use PUT for updating
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          venueId: selectedVenueId,
-          tableNumber: newTableNumber,
-          esp32DeviceId: newEsp32DeviceId,
+          tableNumber: editTableNumber,
+          esp32DeviceId: editEsp32DeviceId,
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to register table.');
+        throw new Error(errorData.message || 'Failed to update table.');
       }
 
-      const registeredTable = await response.json();
-      Alert.alert('Success', `Table "${registeredTable.tableNumber}" registered at ${allVenues.find(v => v._id === registeredTable.venueId)?.name || 'selected venue'}!`);
-      console.log('Registered Table:', registeredTable);
+      const updatedTable = await response.json();
+      Alert.alert('Success', `Table "${updatedTable.tableNumber}" updated successfully!`);
+      console.log('Updated Table:', updatedTable);
 
-      setNewTableNumber('');
-      setNewEsp32DeviceId('');
-
+      // Re-fetch tables for the selected venue to update the list and picker
+      fetchTablesForSelectedVenue();
     } catch (error: any) {
-      console.error('Table registration error:', error);
-      Alert.alert('Registration Failed', `Error: ${error.message}`);
+      console.error('Table update error:', error);
+      Alert.alert('Update Failed', `Error: ${error.message}`);
     } finally {
-      setIsRegisteringTable(false);
+      setIsEditingTable(false);
     }
   };
 
@@ -317,9 +403,8 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
       {item.numberOfTables !== undefined && (
          <Text style={styles.venueDetails}>Tables: {item.numberOfTables}</Text>
       )}
-      {/* Changed button text and action for navigation */}
       <Button
-        title="View Locations"
+        title="View Location"
         onPress={() => navigation.navigate('VenueDetail', { venueId: item._id, venueName: item.name })}
       />
     </View>
@@ -372,7 +457,7 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
           <View style={styles.adminPanel}>
             <Text style={styles.adminPanelTitle}>Admin Panel</Text>
 
-            {/* Register New Venue Section */}
+            {/* Register New Venue Section (no change) */}
             <View style={styles.adminSection}>
               <Text style={styles.adminSectionTitle}>Register New Venue</Text>
               <TextInput
@@ -425,52 +510,83 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
               </TouchableOpacity>
             </View>
 
-            {/* Register Specific Table Section */}
+            {/* Edit Specific Table Section (CHANGED) */}
             <View style={styles.adminSection}>
-              <Text style={styles.adminSectionTitle}>Register Specific Table</Text>
+              <Text style={styles.adminSectionTitle}>Edit Specific Table</Text>
+
               {isLoadingVenuesForAdmin ? (
                 <ActivityIndicator size="small" color="#0000ff" />
               ) : allVenues.length > 0 ? (
-                <Picker
-                  selectedValue={selectedVenueId}
-                  onValueChange={(itemValue, itemIndex) =>
-                    setSelectedVenueId(itemValue)
-                  }
-                  style={styles.picker}
-                  itemStyle={styles.pickerItem}
-                >
-                  {allVenues.map((venue) => (
-                    <Picker.Item key={venue._id} label={venue.name} value={venue._id} />
-                  ))}
-                </Picker>
+                <>
+                  <Text style={styles.pickerLabel}>Select Venue:</Text>
+                  <Picker
+                    selectedValue={selectedVenueId}
+                    onValueChange={(itemValue: string | null) => {
+                      setSelectedVenueId(itemValue);
+                      setSelectedTableId(null); // Reset selected table when venue changes
+                    }}
+                    style={styles.picker}
+                    itemStyle={styles.pickerItem}
+                  >
+                    {allVenues.map((venue) => (
+                      <Picker.Item key={venue._id} label={venue.name} value={venue._id} />
+                    ))}
+                  </Picker>
+
+                  {selectedVenueId && (
+                    isLoadingTablesForEdit ? (
+                      <ActivityIndicator size="small" color="#0000ff" style={{ marginTop: 10 }} />
+                    ) : tablesForSelectedVenue.length > 0 ? (
+                      <>
+                        <Text style={styles.pickerLabel}>Select Table:</Text>
+                        <Picker
+                          selectedValue={selectedTableId}
+                          onValueChange={(itemValue: string | null) => setSelectedTableId(itemValue)}
+                          style={styles.picker}
+                          itemStyle={styles.pickerItem}
+                        >
+                          {tablesForSelectedVenue.map((table) => (
+                            <Picker.Item key={table._id} label={`Table ${table.tableNumber} (ID: ${table.esp32DeviceId || 'N/A'})`} value={table._id} />
+                          ))}
+                        </Picker>
+                      </>
+                    ) : (
+                      <Text style={styles.infoText}>No tables found for this venue. Register some first.</Text>
+                    )
+                  )}
+                </>
               ) : (
                 <Text style={styles.infoText}>No venues available. Register a venue first.</Text>
               )}
 
-              <TextInput
-                style={styles.input}
-                placeholder="Table Number (e.g., A1, 2, Pool Table 3)"
-                value={newTableNumber}
-                onChangeText={setNewTableNumber}
-                autoCapitalize="words"
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="ESP32 Device ID (Unique Identifier)"
-                value={newEsp32DeviceId}
-                onChangeText={setNewEsp32DeviceId}
-              />
-              <TouchableOpacity
-                style={styles.registerButton}
-                onPress={handleRegisterTable}
-                disabled={isRegisteringTable || !selectedVenueId}
-              >
-                {isRegisteringTable ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.registerButtonText}>Register Table</Text>
-                )}
-              </TouchableOpacity>
+              {selectedTableId && ( // Only show inputs if a table is selected
+                <>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="New Table Number (e.g., A1, 2)"
+                    value={editTableNumber}
+                    onChangeText={setEditTableNumber}
+                    autoCapitalize="words"
+                  />
+                  <TextInput
+                    style={styles.input}
+                    placeholder="New ESP32 Device ID (Unique Identifier)"
+                    value={editEsp32DeviceId}
+                    onChangeText={setEditEsp32DeviceId}
+                  />
+                  <TouchableOpacity
+                    style={styles.registerButton} // Re-using style for now
+                    onPress={handleEditTable}
+                    disabled={isEditingTable || !selectedTableId || (!editTableNumber && !editEsp32DeviceId)}
+                  >
+                    {isEditingTable ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={styles.registerButtonText}>Update Table</Text>
+                    )}
+                  </TouchableOpacity>
+                </>
+              )}
             </View>
 
           </View>
@@ -543,7 +659,6 @@ const App = (): JSX.Element => {
     console.log('[AuthStateChanged] User:', firebaseUser ? 'present' : 'null');
     if (firebaseUser) {
       const profile = await fetchUserProfile(firebaseUser);
-      // Directly assign properties to the firebaseUser object to preserve its methods
       (firebaseUser as User).isAdmin = profile.isAdmin;
       (firebaseUser as User).tokenBalance = profile.tokenBalance;
       setUser(firebaseUser as User);
@@ -634,7 +749,6 @@ const App = (): JSX.Element => {
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Home">
         <Stack.Screen name="Home" options={{ headerShown: false }}>
-          {/* Pass user and signOut as initial parameters */}
           {(props) => <HomeScreen {...props} route={{ ...props.route, params: { user, signOut } }} />}
         </Stack.Screen>
         <Stack.Screen
@@ -839,6 +953,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ccc',
     borderRadius: 8,
+  },
+  pickerLabel: { // New style for picker labels
+    fontSize: 16,
+    color: '#555',
+    marginBottom: 5,
+    alignSelf: 'flex-start',
+    marginLeft: 5,
+    fontWeight: '500',
   },
   pickerItem: {
     fontSize: 16,
