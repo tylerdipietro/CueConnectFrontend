@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, FlatList, Alert, Button, SafeAreaView, TouchableOpacity, Modal } from 'react-native';
 import { StackScreenProps } from '@react-navigation/stack';
-import auth from '@react-native-firebase/auth';
+import auth from '@react-native-firebase/auth'; // Using namespaced API directly, will address deprecation later
 import io from 'socket.io-client';
 
 // Define the type for your navigation stack parameters (must match RootStackParamList in App.tsx)
@@ -46,9 +46,10 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
   const [isLoadingTables, setIsLoadingTables] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const currentUser = auth().currentUser; // Get current user object
-  const currentUserUid = currentUser?.uid;
-  const currentUserDisplayName = currentUser?.displayName || currentUser?.email || 'You';
+
+  // NEW STATE: Manage currentUserUid and currentUserDisplayName explicitly
+  const [userAuthUid, setUserAuthUid] = useState<string | null>(null);
+  const [userAuthDisplayName, setUserAuthDisplayName] = useState<string>('You'); // Default value
 
   // State for win confirmation modal
   const [winClaimModalVisible, setWinClaimModalVisible] = useState(false);
@@ -61,13 +62,33 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
 
   const socketRef = useRef<any | null>(null); // Use ref for socket instance
 
-  // Your existing syncUserToBackend function
-  const syncUserToBackend = async () => {
-      const user = auth().currentUser;
-      if (!user) return;
+  // EFFECT: Listen for Firebase Auth state changes
+  useEffect(() => {
+    const subscriber = auth().onAuthStateChanged(user => {
+      if (user) {
+        setUserAuthUid(user.uid);
+        setUserAuthDisplayName(user.displayName || user.email || 'You');
+      } else {
+        setUserAuthUid(null);
+        setUserAuthDisplayName('You'); // Reset on logout
+      }
+    });
+    return subscriber; // Unsubscribe on unmount
+  }, []); // Empty dependency array ensures this runs once on mount
+
+
+  // Your existing syncUserToBackend function - now uses userAuthUid for consistency
+  const syncUserToBackend = useCallback(async () => {
+      // Use the state variable for UID
+      if (!userAuthUid) return;
 
       try {
-        const idToken = await user.getIdToken(true);
+        const idToken = await auth().currentUser?.getIdToken(true); // Get current token
+        if (!idToken) {
+          console.error('No ID token available for backend sync.');
+          return;
+        }
+
         const response = await fetch(`${BACKEND_BASE_URL}/api/users/sync`, {
           method: 'POST',
           headers: {
@@ -75,7 +96,8 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            displayName: user.displayName || user.email || 'Unnamed User',
+            // Use the state variable for displayName as well
+            displayName: userAuthDisplayName, 
           }),
         });
         if (!response.ok) {
@@ -86,18 +108,21 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
       } catch (error) {
         console.error('Network error during user sync:', error);
       }
-    };
+    }, [userAuthUid, userAuthDisplayName]); // Depend on userAuthUid and userAuthDisplayName
 
 
-  // Function to fetch tables for the specific venue
+  // Function to fetch tables for the specific venue - now uses userAuthUid
   const fetchTablesForVenue = useCallback(async () => {
     setIsLoadingTables(true);
     setErrorMsg(null);
     try {
-      if (!currentUser) {
-        throw new Error('User not authenticated.');
+      if (!userAuthUid) { // Use the state variable
+        throw new Error('User not authenticated (userAuthUid is null).');
       }
-      const idToken = await currentUser.getIdToken(true);
+      const idToken = await auth().currentUser?.getIdToken(true); // Get current token
+      if (!idToken) {
+        throw new Error('Failed to get authentication token for fetching tables.');
+      }
 
       const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${venueId}/tables`, {
         headers: {
@@ -127,14 +152,21 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
     } finally {
       setIsLoadingTables(false);
     }
-  }, [venueId, currentUser]);
+  }, [venueId, userAuthUid]); // Depend on userAuthUid
 
-  // Fetch admin status when component mounts
+
+  // Fetch admin status when component mounts - now uses userAuthUid
   useEffect(() => {
     const checkAdminStatus = async () => {
-      if (currentUser) {
+      if (userAuthUid) { // Use the state variable
         try {
-          const idToken = await currentUser.getIdToken(true);
+          const idToken = await auth().currentUser?.getIdToken(true); // Get current token
+          if (!idToken) {
+            console.warn('No ID token available for admin check.');
+            setIsAdmin(false);
+            return;
+          }
+
           const response = await fetch(`${BACKEND_BASE_URL}/api/user/profile`, {
             headers: { 'Authorization': `Bearer ${idToken}` },
           });
@@ -154,11 +186,15 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
       }
     };
     checkAdminStatus();
-  }, [currentUserUid, currentUser]);
+  }, [userAuthUid]); // Depend on userAuthUid
 
-  // Socket.IO setup for real-time queue and table status updates
+
+  // Socket.IO setup for real-time queue and table status updates - now depends on userAuthUid
   useEffect(() => {
-    if (!currentUserUid) return;
+    if (!userAuthUid) { // Ensure userAuthUid is available before connecting socket
+      console.log('[Socket.IO] User UID not available, skipping socket connection.');
+      return;
+    }
 
     const socket = io(SOCKET_IO_URL, {
       transports: ['websocket'],
@@ -168,8 +204,9 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
     socket.on('connect', () => {
       console.log('[Socket.IO] Connected to backend server:', socket.id);
       (async () => {
-          await syncUserToBackend(); // Ensure DB write finishes before anything else
-          socket.emit('registerForUpdates', currentUserUid);
+          // Sync user AFTER socket connection and after userAuthUid is confirmed
+          await syncUserToBackend(); 
+          socket.emit('registerForUpdates', userAuthUid); // Use userAuthUid
           socket.emit('joinVenueRoom', venueId); // Now safe to join room
       })();
     });
@@ -250,19 +287,23 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
       socket.disconnect();
       console.log('[Socket.IO] Disconnected client socket on unmount.');
     };
-  }, [venueId, currentUserUid]);
+  }, [venueId, userAuthUid, syncUserToBackend]); // Depend on userAuthUid and syncUserToBackend
 
+  // Fetch tables when userAuthUid becomes available or venueId changes
   useEffect(() => {
-    fetchTablesForVenue();
-  }, [fetchTablesForVenue]);
+    if (userAuthUid) { // Only fetch tables if user is authenticated
+      fetchTablesForVenue();
+    }
+  }, [fetchTablesForVenue, userAuthUid]); // Add userAuthUid as dependency
+
 
   // --- API Call Functions ---
 
   const sendAuthenticatedRequest = useCallback(async (path: string, method: string = 'POST', body?: any) => {
-    if (!currentUserUid) {
+    if (!userAuthUid) { // Use the state variable
       throw new Error('User not authenticated.');
     }
-    const idToken = await currentUser?.getIdToken(true);
+    const idToken = await auth().currentUser?.getIdToken(true); // Get current token
     if (!idToken) {
       throw new Error('Failed to get authentication token.');
     }
@@ -291,7 +332,7 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
 
     // Expecting JSON response for all authenticated requests
     return response.json();
-  }, [currentUser, currentUserUid]);
+  }, [userAuthUid]); // Depend on userAuthUid
 
 
   const handleJoinTable = async (table: Table) => {
@@ -354,10 +395,10 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
 
   // handleClaimWin
   const handleClaimWin = async (table: Table) => {
-    if (!currentUserUid) return;
+    if (!userAuthUid) return; // Use the state variable
 
     // Safely access currentPlayers for the check
-    const isPlayer = table.currentPlayers.player1Id === currentUserUid || table.currentPlayers.player2Id === currentUserUid;
+    const isPlayer = table.currentPlayers.player1Id === userAuthUid || table.currentPlayers.player2Id === userAuthUid;
     if (!isPlayer) {
       Alert.alert('Error', 'You must be an active player to claim a win.');
       return;
@@ -372,7 +413,11 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
           text: "Claim Win",
           onPress: async () => {
             try {
-              await sendAuthenticatedRequest(`/tables/${table._id}/claim-win`);
+              // Ensure we use the current user's display name for the backend payload
+              await sendAuthenticatedRequest(`/tables/${table._id}/claim-win`, 'POST', {
+                // Assuming backend uses req.user.displayName, no need to send it explicitly unless for specific server-side messaging.
+                // If the backend expects it, add winnerDisplayName: userAuthDisplayName here.
+              });
               // Backend will send socket event for confirmation status
             } catch (error: any) {
               console.error('Error claiming win:', error);
@@ -388,7 +433,7 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
 
   // handleConfirmWin (from modal)
   const handleConfirmWin = async () => {
-    if (!claimedWinDetails || !currentUserUid) return;
+    if (!claimedWinDetails || !userAuthUid) return; // Use the state variable
 
     try {
       await sendAuthenticatedRequest(`/tables/${claimedWinDetails.tableId}/confirm-win`, 'POST', {
@@ -447,13 +492,13 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
 
     console.log(`[FRONTEND-RENDER] Table ${item.tableNumber} currentPlayersSafe (at render):`, JSON.stringify(currentPlayersSafe, null, 2));
     console.log(`[FRONTEND-RENDER] Table ${item.tableNumber} item.queue (at render):`, JSON.stringify(item.queue, null, 2));
-    console.log(`[FRONTEND-RENDER] currentUserUid (at render): ${currentUserUid}`);
-    console.log(`[FRONTEND-RENDER] currentUserDisplayName (at render): ${currentUserDisplayName}`);
+    console.log(`[FRONTEND-RENDER] userAuthUid (at render): ${userAuthUid}`); // Use new state variable
+    console.log(`[FRONTEND-RENDER] userAuthDisplayName (at render): ${userAuthDisplayName}`); // Use new state variable
 
 
     const numPlayers = (currentPlayersSafe.player1Id ? 1 : 0) + (currentPlayersSafe.player2Id ? 1 : 0);
-    const isCurrentUserPlaying = currentPlayersSafe.player1Id === currentUserUid || currentPlayersSafe.player2Id === currentUserUid;
-    const isCurrentUserInQueue = item.queue.some(userInQueue => String(userInQueue._id) === String(currentUserUid));
+    const isCurrentUserPlaying = currentPlayersSafe.player1Id === userAuthUid || currentPlayersSafe.player2Id === userAuthUid; // Use new state variable
+    const isCurrentUserInQueue = item.queue.some(userInQueue => String(userInQueue._id) === String(userAuthUid)); // Use new state variable
 
     // Determine primary button text and action
     let primaryButtonText = '';
@@ -490,12 +535,12 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
         primaryButtonColor = '#17a2b8';
     }
 
-    const queuePosition = isCurrentUserInQueue ? item.queue.findIndex(userInQueue => String(userInQueue._id) === String(currentUserUid)) + 1 : null;
+    const queuePosition = isCurrentUserInQueue ? item.queue.findIndex(userInQueue => String(userInQueue._id) === String(userAuthUid)) + 1 : null; // Use new state variable
 
     // Player display names: Now directly use the populated display names from currentPlayersSafe
     // Fallback to 'Unknown Player' if displayName is not provided by backend.
-    const player1DisplayName = currentPlayersSafe.player1Id ? (currentPlayersSafe.player1Id === currentUserUid ? `${currentUserDisplayName} (You)` : (currentPlayersSafe.player1DisplayName || 'Unknown Player')) : 'Empty';
-    const player2DisplayName = currentPlayersSafe.player2Id ? (currentPlayersSafe.player2Id === currentUserUid ? `${currentUserDisplayName} (You)` : (currentPlayersSafe.player2DisplayName || 'Unknown Player')) : 'Empty';
+    const player1DisplayName = currentPlayersSafe.player1Id ? (currentPlayersSafe.player1Id === userAuthUid ? `${userAuthDisplayName} (You)` : (currentPlayersSafe.player1DisplayName || 'Unknown Player')) : 'Empty'; // Use new state variable
+    const player2DisplayName = currentPlayersSafe.player2Id ? (currentPlayersSafe.player2Id === userAuthUid ? `${userAuthDisplayName} (You)` : (currentPlayersSafe.player2DisplayName || 'Unknown Player')) : 'Empty'; // Use new state variable
 
     return (
       <View style={styles.tableItem}>
@@ -543,7 +588,7 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
               <Text style={styles.queueListTitle}>Current Queue:</Text>
               {item.queue.map((userInQueue, index) => (
                 <Text key={userInQueue._id || `queue-item-${index}`} style={styles.queueListItem}> {/* Added fallback key */}
-                  {index + 1}. {userInQueue.displayName || 'Unnamed User'} {String(userInQueue._id) === String(currentUserUid) ? '(You)' : ''}
+                  {index + 1}. {userInQueue.displayName || 'Unnamed User'} {String(userInQueue._id) === String(userAuthUid) ? '(You)' : ''} {/* Use new state variable */}
                 </Text>
               ))}
             </View>
