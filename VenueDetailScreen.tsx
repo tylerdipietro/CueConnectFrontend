@@ -510,17 +510,18 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
         primaryButtonAction = () => handleClaimWin(item);
         primaryButtonColor = '#28a745';
     } else if (item.queue.length === 0) { // No one in queue, so can either join directly or fill a spot
-        if (numPlayers === 0 && item.status === 'available') {
+        // Refined condition for direct join:
+        // Either it's completely empty and available (0 players, status 'available'),
+        // OR it has one player and is either available (winner-stays scenario) or in_play (second player joining active game).
+        const canJoinTableDirectly = (numPlayers === 0 && item.status === 'available') ||
+                                     (numPlayers === 1 && (item.status === 'available' || item.status === 'in_play'));
+
+        if (canJoinTableDirectly) {
             primaryButtonText = 'Join Table';
             primaryButtonAction = () => handleJoinTable(item);
             primaryButtonColor = '#007bff';
-        } else if (numPlayers === 1 && item.status === 'in_play') {
-            primaryButtonText = 'Join Table'; // Second player joining an in-play game
-            primaryButtonAction = () => handleJoinTable(item);
-            primaryButtonColor = '#007bff';
         } else {
-            // Table is full (numPlayers === 2) AND queue is empty, but status is not right for direct join
-            // Or table is in other states (maintenance etc.)
+            // Table is full (numPlayers === 2), or has an invalid status for direct join, etc.
             primaryButtonText = 'N/A';
             primaryButtonAction = () => Alert.alert('Info', 'This action is not available for this table at the moment.');
             primaryButtonColor = '#6c757d';

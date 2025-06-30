@@ -16,6 +16,7 @@ import {
 import { Picker } from '@react-native-picker/picker';
 
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
+import messaging from '@react-native-firebase/messaging'; // NEW IMPORT for push notifications
 import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin';
 import * as Location from 'expo-location';
 
@@ -616,6 +617,71 @@ const App = (): JSX.Element => {
     console.log('[GoogleSignin] Configured');
   }, []);
 
+  // NEW: Function to request notification permissions and get FCM token
+  const requestUserPermissionAndGetToken = useCallback(async () => {
+    // Request permission for iOS
+    const authStatus = await messaging().requestPermission();
+    const enabled =
+      authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+      authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+
+    if (enabled) {
+      console.log('Notification Authorization status:', authStatus);
+      // Get the FCM token
+      const fcmToken = await messaging().getToken();
+      console.log('FCM Token obtained:', fcmToken);
+      return fcmToken;
+    } else {
+      console.log('User denied notification permissions or permissions not granted.');
+      return null;
+    }
+  }, []);
+
+  // NEW: Function to send FCM Token to Backend
+  const sendFcmTokenToBackend = async (uid: string, token: string, idToken: string) => {
+    try {
+      const response = await fetch(`${BACKEND_BASE_URL}/api/users/update-fcm-token`, { // This endpoint needs to be created on backend
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ fcmToken: token }),
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Failed to send FCM token to backend:', errorData.message);
+      } else {
+        console.log('FCM token sent to backend successfully.');
+      }
+    } catch (error) {
+      console.error('Network error sending FCM token:', error);
+    }
+  };
+
+  // NEW: Handle incoming messages when the app is in the foreground
+  useEffect(() => {
+    const unsubscribe = messaging().onMessage(async remoteMessage => {
+      console.log('FCM Message received in foreground:', remoteMessage);
+      Alert.alert(
+        remoteMessage.notification?.title || 'New Notification',
+        remoteMessage.notification?.body || 'You have a new message.'
+      );
+      // You can add more specific handling here based on remoteMessage.data
+      // For example, if remoteMessage.data.type === 'win_claim', you could trigger a modal.
+    });
+
+    return unsubscribe; // Unsubscribe when component unmounts
+  }, []);
+
+  // NOTE: For background/quit state notifications, you typically set up
+  // messaging().setBackgroundMessageHandler in your root index.js or App.js file
+  // outside of any React component. This allows the handler to run even when the app is closed.
+  // Example for index.js:
+  // messaging().setBackgroundMessageHandler(async remoteMessage => {
+  //   console.log('Message handled in the background!', remoteMessage);
+  // });
+
   useEffect(() => {
     const subscriber = auth().onAuthStateChanged(onAuthStateChanged);
     return subscriber;
@@ -662,6 +728,13 @@ const App = (): JSX.Element => {
       (firebaseUser as User).isAdmin = profile.isAdmin;
       (firebaseUser as User).tokenBalance = profile.tokenBalance;
       setUser(firebaseUser as User);
+
+      // CRUCIAL: Get and send FCM token AFTER user is authenticated and profile is loaded
+      const fcmToken = await requestUserPermissionAndGetToken();
+      if (fcmToken) {
+        await sendFcmTokenToBackend(firebaseUser.uid, fcmToken, await firebaseUser.getIdToken(true));
+      }
+
     } else {
       setUser(null);
     }
