@@ -29,6 +29,18 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow CueConnect to always access your location to find nearby pool tables and provide updates, even when the app is in the background."
       }
     },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ]
+    },
     "web": {
       "favicon": "./assets/favicon.png"
     },
@@ -38,7 +50,7 @@
       }
     },
     "plugins": [
-      "expo-location", 
+      "expo-location",
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
       "@react-native-firebase/crashlytics",
@@ -47,7 +59,13 @@
         "expo-build-properties",
         {
           "ios": {
-            "useFrameworks": "static"
+            "useFrameworks": "static",
+            "infoPlist": {
+              "UIBackgroundModes": ["remote-notification"] // Ensures background remote notifications are enabled
+            },
+            "entitlements": {
+              "aps-environment": "development" // Explicitly add aps-environment for development
+            }
           }
         }
       ],
