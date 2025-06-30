@@ -17,14 +17,14 @@ import { Picker } from '@react-native-picker/picker';
 
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
 import messaging from '@react-native-firebase/messaging'; 
-import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin'; // Corrected import path
+import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin';
 import * as Location from 'expo-location';
 
 // Import navigation components
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, StackScreenProps } from '@react-navigation/stack';
 
-// Import the new VenueDetailScreen component
+// Import the new VenueDetailScreen components
 import VenueDetailScreen from './VenueDetailScreen'; 
 
 // Define the type for your navigation stack parameters
@@ -635,7 +635,7 @@ const App = (): JSX.Element => {
 
       if (enabled) {
         console.log('[FCM_DEBUG] Permissions granted. Registering device for remote messages...');
-        // NEW: Register device for remote messages before getting token
+        // RE-ADDED: Register device for remote messages
         await messaging().registerDeviceForRemoteMessages(); 
         console.log('[FCM_DEBUG] Device registered for remote messages.');
 

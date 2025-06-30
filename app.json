@@ -61,10 +61,10 @@
           "ios": {
             "useFrameworks": "static",
             "infoPlist": {
-              "UIBackgroundModes": ["remote-notification"] // Ensures background remote notifications are enabled
+              "UIBackgroundModes": ["remote-notification"] // Explicitly enable remote notifications background mode
             },
             "entitlements": {
-              "aps-environment": "development" // Explicitly add aps-environment for development
+              "aps-environment": "development" // Explicitly set aps-environment for development builds
             }
           }
         }
