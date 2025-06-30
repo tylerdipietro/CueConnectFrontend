@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -16,8 +16,8 @@ import {
 import { Picker } from '@react-native-picker/picker';
 
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
-import messaging from '@react-native-firebase/messaging'; // NEW IMPORT for push notifications
-import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin';
+import messaging from '@react-native-firebase/messaging'; 
+import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin'; // Corrected import path
 import * as Location from 'expo-location';
 
 // Import navigation components
@@ -25,12 +25,12 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, StackScreenProps } from '@react-navigation/stack';
 
 // Import the new VenueDetailScreen component
-import VenueDetailScreen from './VenueDetailScreen'; // Assuming VenueDetailScreen.tsx in same directory
+import VenueDetailScreen from './VenueDetailScreen'; 
 
 // Define the type for your navigation stack parameters
 type RootStackParamList = {
-  Home: { user: User; signOut: () => Promise<void> }; // Home screen with user and signOut props
-  VenueDetail: { venueId: string; venueName: string }; // VenueDetail screen with venue ID and name
+  Home: { user: User; signOut: () => Promise<void> }; 
+  VenueDetail: { venueId: string; venueName: string }; 
 };
 
 // Create the stack navigator
@@ -62,13 +62,13 @@ const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
 // Define the props for HomeScreen, including navigation props
 type HomeScreenProps = StackScreenProps<RootStackParamList, 'Home'>;
 
-// --- HomeScreen Component (now receives navigation prop) ---
+// --- HomeScreen Component (no changes needed here for this specific bug) ---
 const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
-  const { user, signOut } = route.params; // Get user and signOut from route params
+  const { user, signOut } = route.params; 
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [nearbyVenues, setNearbyVenues] = useState<Venue[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState<boolean>(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg, useStateErrorMsg] = useState<string | null>(null);
 
   // State for new venue registration form
   const [newVenueName, setNewVenueName] = useState<string>('');
@@ -82,9 +82,9 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
   const [allVenues, setAllVenues] = useState<Venue[]>([]);
   const [tablesForSelectedVenue, setTablesForSelectedVenue] = useState<Table[]>([]);
   const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
-  const [selectedTableId, setSelectedTableId] = useState<string | null>(null); // New state for selected table
-  const [editTableNumber, setEditTableNumber] = useState<string>(''); // For editing table number
-  const [editEsp32DeviceId, setEditEsp32DeviceId] = useState<string>(''); // For editing ESP32 ID
+  const [selectedTableId, setSelectedTableId] = useState<string | null>(null); 
+  const [editTableNumber, setEditTableNumber] = useState<string>(''); 
+  const [editEsp32DeviceId, setEditEsp32DeviceId] = useState<string>(''); 
   const [isEditingTable, setIsEditingTable] = useState<boolean>(false);
   const [isLoadingVenuesForAdmin, setIsLoadingVenuesForAdmin] = useState<boolean>(false);
   const [isLoadingTablesForEdit, setIsLoadingTablesForEdit] = useState<boolean>(false);
@@ -93,11 +93,11 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
   // Function to fetch user's current location
   const requestLocationPermissionAndGetLocation = useCallback(async () => {
     setIsLoadingLocations(true);
-    setErrorMsg(null);
+    useStateErrorMsg(null);
     try {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        setErrorMsg('Permission to access location was denied. Please enable location services for this app.');
+        useStateErrorMsg('Permission to access location was denied. Please enable location services for this app.');
         setIsLoadingLocations(false);
         return;
       }
@@ -108,7 +108,7 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
       setNewVenueLon(currentLocation.coords.longitude.toFixed(6));
     } catch (error) {
       console.error('[Location Error]', error);
-      setErrorMsg('Failed to get location. Please ensure location services are enabled.');
+      useStateErrorMsg('Failed to get location. Please ensure location services are enabled.');
     } finally {
       setIsLoadingLocations(false);
     }
@@ -121,7 +121,7 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
     }
 
     setIsLoadingLocations(true);
-    setErrorMsg(null);
+    useStateErrorMsg(null);
     try {
       const idToken = await user.getIdToken(true);
       console.log('[API] Fetching nearby venues: token retrieved. Length:', idToken.length, 'Starts with:', idToken.substring(0, 10));
@@ -217,7 +217,7 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
     } finally {
       setIsLoadingVenuesForAdmin(false);
     }
-  }, [user, selectedVenueId]); // Add selectedVenueId to dependency to prevent re-fetching on initial load if already set
+  }, [user, selectedVenueId]); 
 
   // Fetch all venues when admin panel is shown and user is ready
   useEffect(() => {
@@ -229,8 +229,8 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
   // Effect to fetch tables for the currently selected venue
   const fetchTablesForSelectedVenue = useCallback(async () => {
     if (!selectedVenueId || !user) {
-      setTablesForSelectedVenue([]); // Clear tables if no venue selected
-      setSelectedTableId(null); // Clear selected table
+      setTablesForSelectedVenue([]); 
+      setSelectedTableId(null); 
       setEditTableNumber('');
       setEditEsp32DeviceId('');
       return;
@@ -274,7 +274,7 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
     } finally {
       setIsLoadingTablesForEdit(false);
     }
-  }, [selectedVenueId, user, selectedTableId]); // Add selectedTableId to prevent re-fetching if already set
+  }, [selectedVenueId, user, selectedTableId]); 
 
   // Re-fetch tables for selected venue whenever selectedVenueId or user changes
   useEffect(() => {
@@ -337,8 +337,8 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
       setNewVenueName('');
       setNewVenueAddress('');
       setNewVenueTablesCount('');
-      fetchAllVenuesForAdmin(); // Re-fetch all venues to update the picker
-      fetchNearbyVenues(); // Re-fetch nearby venues as a new one might be close
+      fetchAllVenuesForAdmin(); 
+      fetchNearbyVenues(); 
     } catch (error: any) {
       console.error('Venue registration error:', error);
       Alert.alert('Registration Failed', `Error: ${error.message}`);
@@ -366,7 +366,7 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
     try {
       const idToken = await user.getIdToken(true);
       const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${selectedTableId}`, {
-        method: 'PUT', // Use PUT for updating
+        method: 'PUT', 
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${idToken}`,
@@ -608,6 +608,10 @@ const App = (): JSX.Element => {
   const [user, setUser] = useState<User>(null);
   const [isProfileLoading, setIsProfileLoading] = useState<boolean>(false);
 
+  // Use a ref to track if authentication processing is currently underway
+  // This helps prevent redundant execution of onAuthStateChanged logic if it fires multiple times rapidly.
+  const isAuthProcessing = useRef(false);
+
   useEffect(() => {
     GoogleSignin.configure({
       webClientId: '47513412219-hsvcpm1h7f3kusd42sk31i89ilv7lk94.apps.googleusercontent.com',
@@ -617,30 +621,48 @@ const App = (): JSX.Element => {
     console.log('[GoogleSignin] Configured');
   }, []);
 
-  // NEW: Function to request notification permissions and get FCM token
+  // Function to request notification permissions and get FCM token
   const requestUserPermissionAndGetToken = useCallback(async () => {
-    // Request permission for iOS
-    const authStatus = await messaging().requestPermission();
-    const enabled =
-      authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
-      authStatus === messaging.AuthorizationStatus.PROVISIONAL;
+    console.log('[FCM_DEBUG] Attempting to request notification permissions.');
+    try {
+      // Request permission for iOS
+      const authStatus = await messaging().requestPermission();
+      const enabled =
+        authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+        authStatus === messaging.AuthorizationStatus.PROVISIONAL;
 
-    if (enabled) {
-      console.log('Notification Authorization status:', authStatus);
-      // Get the FCM token
-      const fcmToken = await messaging().getToken();
-      console.log('FCM Token obtained:', fcmToken);
-      return fcmToken;
-    } else {
-      console.log('User denied notification permissions or permissions not granted.');
+      console.log('[FCM_DEBUG] Notification Authorization status:', authStatus);
+
+      if (enabled) {
+        console.log('[FCM_DEBUG] Permissions granted. Registering device for remote messages...');
+        // NEW: Register device for remote messages before getting token
+        await messaging().registerDeviceForRemoteMessages(); 
+        console.log('[FCM_DEBUG] Device registered for remote messages.');
+
+        try {
+          // Get the FCM token
+          const fcmToken = await messaging().getToken();
+          console.log('[FCM_DEBUG] FCM Token obtained:', fcmToken);
+          return fcmToken;
+        } catch (tokenError) {
+          console.error('[FCM_DEBUG] Error getting FCM token:', tokenError);
+          return null;
+        }
+      } else {
+        console.log('[FCM_DEBUG] User denied notification permissions or permissions not granted.');
+        return null;
+      }
+    } catch (permissionError) {
+      console.error('[FCM_DEBUG] Error requesting notification permission:', permissionError);
       return null;
     }
   }, []);
 
-  // NEW: Function to send FCM Token to Backend
+  // Function to send FCM Token to Backend
   const sendFcmTokenToBackend = async (uid: string, token: string, idToken: string) => {
+    console.log('[FCM_DEBUG] Attempting to send FCM token to backend for user:', uid);
     try {
-      const response = await fetch(`${BACKEND_BASE_URL}/api/users/update-fcm-token`, { // This endpoint needs to be created on backend
+      const response = await fetch(`${BACKEND_BASE_URL}/api/users/update-fcm-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -650,47 +672,36 @@ const App = (): JSX.Element => {
       });
       if (!response.ok) {
         const errorData = await response.json();
-        console.error('Failed to send FCM token to backend:', errorData.message);
+        console.error('[FCM_DEBUG] Failed to send FCM token to backend:', errorData.message, errorData);
       } else {
-        console.log('FCM token sent to backend successfully.');
+        console.log('[FCM_DEBUG] FCM token sent to backend successfully.');
       }
     } catch (error) {
-      console.error('Network error sending FCM token:', error);
+      console.error('[FCM_DEBUG] Network error sending FCM token:', error);
     }
   };
 
-  // NEW: Handle incoming messages when the app is in the foreground
+  // Handle incoming messages when the app is in the foreground
   useEffect(() => {
+    console.log('[FCM_DEBUG] Setting up onMessage listener for foreground notifications.');
     const unsubscribe = messaging().onMessage(async remoteMessage => {
-      console.log('FCM Message received in foreground:', remoteMessage);
+      console.log('[FCM_DEBUG] FCM Message received in foreground:', remoteMessage);
       Alert.alert(
         remoteMessage.notification?.title || 'New Notification',
         remoteMessage.notification?.body || 'You have a new message.'
       );
-      // You can add more specific handling here based on remoteMessage.data
-      // For example, if remoteMessage.data.type === 'win_claim', you could trigger a modal.
     });
 
-    return unsubscribe; // Unsubscribe when component unmounts
-  }, []);
-
-  // NOTE: For background/quit state notifications, you typically set up
-  // messaging().setBackgroundMessageHandler in your root index.js or App.js file
-  // outside of any React component. This allows the handler to run even when the app is closed.
-  // Example for index.js:
-  // messaging().setBackgroundMessageHandler(async remoteMessage => {
-  //   console.log('Message handled in the background!', remoteMessage);
-  // });
-
-  useEffect(() => {
-    const subscriber = auth().onAuthStateChanged(onAuthStateChanged);
-    return subscriber;
+    return () => {
+      console.log('[FCM_DEBUG] Cleaning up onMessage listener.');
+      unsubscribe(); // Unsubscribe when component unmounts or effect re-runs
+    };
   }, []);
 
   /**
    * Fetches user profile (including isAdmin status and tokenBalance) from backend after Firebase auth.
    */
-  const fetchUserProfile = async (firebaseUser: FirebaseAuthTypes.User) => {
+  const fetchUserProfile = useCallback(async (firebaseUser: FirebaseAuthTypes.User) => {
     setIsProfileLoading(true);
     try {
       const idToken = await firebaseUser.getIdToken(true);
@@ -719,27 +730,63 @@ const App = (): JSX.Element => {
     } finally {
       setIsProfileLoading(false);
     }
-  };
+  }, []);
 
-  async function onAuthStateChanged(firebaseUser: FirebaseAuthTypes.User | null) {
-    console.log('[AuthStateChanged] User:', firebaseUser ? 'present' : 'null');
-    if (firebaseUser) {
-      const profile = await fetchUserProfile(firebaseUser);
-      (firebaseUser as User).isAdmin = profile.isAdmin;
-      (firebaseUser as User).tokenBalance = profile.tokenBalance;
-      setUser(firebaseUser as User);
+  // Make onAuthStateChanged a useCallback to ensure its reference stability
+  const onAuthStateChanged = useCallback(async (firebaseUser: FirebaseAuthTypes.User | null) => {
+    // This debug log should ALWAYS show up if this function is called.
+    console.log(`[AUTH_DEBUG_MAIN] onAuthStateChanged invoked. User: ${firebaseUser ? firebaseUser.uid : 'null'}. Initializing: ${initializing}. isAuthProcessing: ${isAuthProcessing.current}`);
 
-      // CRUCIAL: Get and send FCM token AFTER user is authenticated and profile is loaded
-      const fcmToken = await requestUserPermissionAndGetToken();
-      if (fcmToken) {
-        await sendFcmTokenToBackend(firebaseUser.uid, fcmToken, await firebaseUser.getIdToken(true));
-      }
-
-    } else {
-      setUser(null);
+    // If processing is already underway, just return to prevent re-entry loops
+    if (isAuthProcessing.current) {
+        console.log('[AUTH_DEBUG_MAIN] Already processing an auth state change. Skipping redundant call.');
+        return;
     }
-    if (initializing) setInitializing(false);
-  }
+
+    isAuthProcessing.current = true; // Set flag to true to indicate processing has started
+
+    try {
+      if (firebaseUser) {
+        console.log('[AUTH_DEBUG_MAIN] User is present. Starting profile fetch and FCM token update.');
+        const profile = await fetchUserProfile(firebaseUser);
+        (firebaseUser as User).isAdmin = profile.isAdmin;
+        (firebaseUser as User).tokenBalance = profile.tokenBalance;
+        setUser(firebaseUser as User); // This sets the authenticated user in state
+
+        const fcmToken = await requestUserPermissionAndGetToken(); // This now has more detailed logs
+        if (fcmToken) {
+          await sendFcmTokenToBackend(firebaseUser.uid, fcmToken, await firebaseUser.getIdToken(true)); // This now has more detailed logs
+        }
+        console.log('[AUTH_DEBUG_MAIN] Profile and FCM process completed for existing user.');
+
+      } else {
+        console.log('[AUTH_DEBUG_MAIN] User is null. Setting user to null.');
+        setUser(null); // Clear user state if no Firebase user
+      }
+    } catch (error) {
+      console.error('[AUTH_DEBUG_MAIN] Error during auth state processing:', error);
+      // Ensure user is set to null or appropriate error state on failure
+      setUser(null);
+      Alert.alert('Authentication Error', 'Failed to process authentication. Please try again.');
+    } finally {
+      // Ensure initializing is set to false only once for the initial load
+      if (initializing) {
+        setInitializing(false);
+        console.log('[AUTH_DEBUG_MAIN] setInitializing(false) called.');
+      }
+      isAuthProcessing.current = false; // Reset processing flag
+      console.log('[AUTH_DEBUG_MAIN] Auth state processing finished. isAuthProcessing set to false.');
+    }
+  }, [initializing, fetchUserProfile, requestUserPermissionAndGetToken, sendFcmTokenToBackend]);
+
+  useEffect(() => {
+    console.log('[AUTH_DEBUG_EFFECT] Setting up auth state listener.');
+    const subscriber = auth().onAuthStateChanged(onAuthStateChanged);
+    return () => {
+      console.log('[AUTH_DEBUG_EFFECT] Cleaning up auth state listener.');
+      subscriber(); // Unsubscribe when component unmounts or effect re-runs
+    };
+  }, [onAuthStateChanged]); // Dependency on the memoized onAuthStateChanged callback
 
   async function onGoogleButtonPress(): Promise<void> {
     try {
@@ -793,15 +840,19 @@ const App = (): JSX.Element => {
     }
   }
 
+  // Display loading screen while initializing or profile is loading
   if (initializing || isProfileLoading) {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#0000ff" />
-        <Text style={styles.loadingText}>{initializing ? 'Loading Firebase authentication...' : 'Fetching user profile...'}</Text>
+        <Text style={styles.loadingText}>
+          {initializing ? 'Loading Firebase authentication...' : 'Fetching user profile...'}
+        </Text>
       </View>
     );
   }
 
+  // Display sign-in button if no user is authenticated
   if (!user) {
     return (
       <SafeAreaView style={styles.container}>
@@ -818,6 +869,7 @@ const App = (): JSX.Element => {
     );
   }
 
+  // Display main app content if user is authenticated and profile loaded
   return (
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Home">
@@ -1027,7 +1079,7 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     borderRadius: 8,
   },
-  pickerLabel: { // New style for picker labels
+  pickerLabel: { 
     fontSize: 16,
     color: '#555',
     marginBottom: 5,
