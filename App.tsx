@@ -24,12 +24,12 @@ import * as Location from 'expo-location';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, StackScreenProps } from '@react-navigation/stack';
 
-// Import the new VenueDetailScreen components
+// Import the new VenueDetailScreen component
 import VenueDetailScreen from './VenueDetailScreen'; 
 
 // Define the type for your navigation stack parameters
 type RootStackParamList = {
-  Home: { user: User; signOut: () => Promise<void> }; 
+  Home: { user: User; signOut: () => Promise<void>; pendingNotification: any | null; clearPendingNotification: () => void }; 
   VenueDetail: { venueId: string; venueName: string }; 
 };
 
@@ -59,12 +59,17 @@ interface Table {
 // Backend base URL
 const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
 
-// Define the props for HomeScreen, including navigation props
-type HomeScreenProps = StackScreenProps<RootStackParamList, 'Home'>;
+// Define the props for HomeScreen, including navigation prop
+type HomeScreenProps = StackScreenProps<RootStackParamList, 'Home'> & {
+  user: User;
+  signOut: () => Promise<void>;
+  pendingNotification: any | null;
+  clearPendingNotification: () => void;
+};
 
-// --- HomeScreen Component (no changes needed here for this specific bug) ---
-const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
-  const { user, signOut } = route.params; 
+// --- HomeScreen Component ---
+const HomeScreen = ({ route, navigation,user,signOut,pendingNotification, clearPendingNotification }: HomeScreenProps): JSX.Element => {
+  
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
   const [nearbyVenues, setNearbyVenues] = useState<Venue[]>([]);
   const [isLoadingLocations, setIsLoadingLocations] = useState<boolean>(true);
@@ -88,6 +93,124 @@ const HomeScreen = ({ route, navigation }: HomeScreenProps): JSX.Element => {
   const [isEditingTable, setIsEditingTable] = useState<boolean>(false);
   const [isLoadingVenuesForAdmin, setIsLoadingVenuesForAdmin] = useState<boolean>(false);
   const [isLoadingTablesForEdit, setIsLoadingTablesForEdit] = useState<boolean>(false);
+
+  // Function to handle confirming a win
+  const handleConfirmWin = useCallback(async (data: any) => {
+    if (!user) {
+      Alert.alert('Authentication Error', 'You must be logged in to confirm a win.');
+      return;
+    }
+    console.log('[WinConfirmation] Confirming win with data:', data);
+    try {
+      const idToken = await user.getIdToken(true);
+      // Replace with your actual backend endpoint for confirming a win
+      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${data.tableId}/confirm-win`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          sessionId: data.sessionId,
+          winnerId: data.winnerId,
+          // Add any other necessary data for confirmation
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to confirm win.');
+      }
+      Alert.alert('Success', 'Win confirmed!');
+    } catch (error: any) {
+      console.error('Error confirming win:', error);
+      Alert.alert('Error', `Failed to confirm win: ${error.message}`);
+    } finally {
+      clearPendingNotification(); // Always clear the notification after handling
+    }
+  }, [user, clearPendingNotification]);
+
+  // Function to handle disputing a win
+  const handleDisputeWin = useCallback(async (data: any) => {
+    if (!user) {
+      Alert.alert('Authentication Error', 'You must be logged in to dispute a win.');
+      return;
+    }
+    console.log('[WinConfirmation] Disputing win with data:', data);
+    try {
+      const idToken = await user.getIdToken(true);
+      // Replace with your actual backend endpoint for disputing a win
+      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${data.tableId}/dispute-win`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          sessionId: data.sessionId,
+          disputerId: user.uid, // The current user is the one disputing
+          // Add any other necessary data for dispute
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to dispute win.');
+      }
+      Alert.alert('Success', 'Win dispute submitted.');
+    } catch (error: any) {
+      console.error('Error disputing win:', error);
+      Alert.alert('Error', `Failed to dispute win: ${error.message}`);
+    } finally {
+      clearPendingNotification(); // Always clear the notification after handling
+    }
+  }, [user, clearPendingNotification]);
+
+  // Effect to handle pending notifications (e.g., win confirmation)
+useEffect(() => {
+  console.log('[NotificationHandler] HomeScreen useEffect triggered. pendingNotification:', JSON.stringify(pendingNotification, null, 2));
+
+  if (pendingNotification) {
+    console.log('[NotificationHandler] Raw pendingNotification object:', pendingNotification); // <-- ADDED LOG
+
+    if (pendingNotification.data?.type === 'win_confirmation') {
+      const { winnerName, venueName, tableNumber } = pendingNotification.data;
+      console.log('[NotificationHandler] Triggering win confirmation alert for:', {
+        winnerName,
+        venueName,
+        tableNumber,
+      });
+
+      Alert.alert(
+        'Win Claimed!', // Updated title
+        `${winnerName} claims victory on Table ${tableNumber}, confirm or dispute?`, // Updated message
+        [
+          {
+            text: 'Dispute',
+            onPress: () => handleDisputeWin(pendingNotification.data),
+            style: 'destructive',
+          },
+          {
+            text: 'Confirm',
+            onPress: () => handleConfirmWin(pendingNotification.data),
+            style: 'default',
+          },
+        ],
+        { cancelable: false } // Force user to choose an option
+      );
+    } else {
+      console.log('[NotificationHandler] Handling generic notification:', pendingNotification.notification);
+
+      Alert.alert(
+        pendingNotification.notification?.title || 'New Notification',
+        pendingNotification.notification?.body || 'You have a new message.',
+        [
+          { text: 'OK', onPress: () => clearPendingNotification() }
+        ]
+      );
+    }
+  }
+}, [pendingNotification, clearPendingNotification, handleConfirmWin, handleDisputeWin]);
 
 
   // Function to fetch user's current location
@@ -607,6 +730,7 @@ const App = (): JSX.Element => {
   const [initializing, setInitializing] = useState<boolean>(true);
   const [user, setUser] = useState<User>(null);
   const [isProfileLoading, setIsProfileLoading] = useState<boolean>(false);
+  const [pendingNotification, setPendingNotification] = useState<any | null>(null); // New state for pending notifications
 
   // Use a ref to track if authentication processing is currently underway
   // This helps prevent redundant execution of onAuthStateChanged logic if it fires multiple times rapidly.
@@ -635,7 +759,6 @@ const App = (): JSX.Element => {
 
       if (enabled) {
         console.log('[FCM_DEBUG] Permissions granted. Registering device for remote messages...');
-        // RE-ADDED: Register device for remote messages
         await messaging().registerDeviceForRemoteMessages(); 
         console.log('[FCM_DEBUG] Device registered for remote messages.');
 
@@ -685,7 +808,8 @@ const App = (): JSX.Element => {
   useEffect(() => {
     console.log('[FCM_DEBUG] Setting up onMessage listener for foreground notifications.');
     const unsubscribe = messaging().onMessage(async remoteMessage => {
-      console.log('[FCM_DEBUG] FCM Message received in foreground:', remoteMessage);
+      console.log('[FCM_DEBUG] FCM Message received in foreground:', JSON.stringify(remoteMessage, null, 2));
+      // For foreground, we can directly show the alert
       Alert.alert(
         remoteMessage.notification?.title || 'New Notification',
         remoteMessage.notification?.body || 'You have a new message.'
@@ -696,6 +820,32 @@ const App = (): JSX.Element => {
       console.log('[FCM_DEBUG] Cleaning up onMessage listener.');
       unsubscribe(); // Unsubscribe when component unmounts or effect re-runs
     };
+  }, []);
+
+  // Handle notifications when app is in background or killed state
+  useEffect(() => {
+    // Listener for when app is in background and opened by tapping notification
+    const unsubscribeOnNotificationOpenedApp = messaging().onNotificationOpenedApp(remoteMessage => {
+      console.log('[FCM_DEBUG] Notification caused app to open from background state:', JSON.stringify(remoteMessage, null, 2));
+      setPendingNotification(remoteMessage); // Store for later display
+    });
+
+    // Check if app was opened from a quit state by tapping a notification
+    messaging().getInitialNotification().then(remoteMessage => {
+      if (remoteMessage) {
+        console.log('[FCM_DEBUG] Notification caused app to open from quit state:', JSON.stringify(remoteMessage, null, 2));
+        setPendingNotification(remoteMessage); // Store for later display
+      }
+    });
+
+    return () => {
+      unsubscribeOnNotificationOpenedApp();
+    };
+  }, []);
+
+  // Function to clear pending notification after it's handled
+  const clearPendingNotification = useCallback(() => {
+    setPendingNotification(null);
   }, []);
 
   /**
@@ -874,7 +1024,15 @@ const App = (): JSX.Element => {
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Home">
         <Stack.Screen name="Home" options={{ headerShown: false }}>
-          {(props) => <HomeScreen {...props} route={{ ...props.route, params: { user, signOut } }} />}
+          {(props) => (
+            <HomeScreen
+              {...props} // navigation, route, etc.
+              user={user}
+              signOut={signOut}
+              pendingNotification={pendingNotification}
+              clearPendingNotification={clearPendingNotification}
+            />
+          )}
         </Stack.Screen>
         <Stack.Screen
           name="VenueDetail"
