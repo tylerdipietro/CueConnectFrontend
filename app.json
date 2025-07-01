@@ -68,4 +68,13 @@
         }
       ],
       [
-        "@react-native-google-signin/google-si
+        "@react-native-google-signin/google-signin",
+        {
+          "iosClientId": "47513412219-s7h2uea77hgadicf5kti86rl6aifobg9.apps.googleusercontent.com",
+          "webClientId": "47513412219-hsvcpm1h7f3kusd42sk31i89ilv7lk94.apps.googleusercontent.com",
+          "iosUrlScheme": "com.googleusercontent.apps.47513412219-s7h2uea77hgadicf5kti86rl6aifobg9"
+        }
+      ]
+    ]
+  }
+}
