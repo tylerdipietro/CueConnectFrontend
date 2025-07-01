@@ -26,8 +26,7 @@
           }
         ],
         "NSLocationWhenInUseUsageDescription": "Allow CueConnect to access your location when using the app to find nearby pool tables and venues.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow CueConnect to always access your location to find nearby pool tables and provide updates, even when the app is in the background.",
-        "UIBackgroundModes": ["remote-notification"]
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow CueConnect to always access your location to find nearby pool tables and provide updates, even when the app is in the background."
       },
       "entitlements": {
         "aps-environment": "development"
@@ -63,7 +62,10 @@
         "expo-build-properties",
         {
           "ios": {
-            "useFrameworks": "static"
+            "useFrameworks": "static",
+            "infoPlist": {
+              "UIBackgroundModes": ["remote-notification"]
+            }
           }
         }
       ],
