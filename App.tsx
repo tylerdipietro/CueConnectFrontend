@@ -16,7 +16,7 @@ import {
 import { Picker } from '@react-native-picker/picker';
 
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
-import messaging from '@react-native-firebase/messaging'; 
+import messaging from '@react-native-firebase/messaging';
 import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin';
 import * as Location from 'expo-location';
 
@@ -24,717 +24,51 @@ import * as Location from 'expo-location';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, StackScreenProps } from '@react-navigation/stack';
 
-// Import the new VenueDetailScreen component
-import VenueDetailScreen from './VenueDetailScreen'; 
+// Import Stripe Provider
+import { StripeProvider } from '@stripe/stripe-react-native';
 
-// Define the type for your navigation stack parameters
-type RootStackParamList = {
-  Home: { user: User; signOut: () => Promise<void>; pendingNotification: any | null; clearPendingNotification: () => void }; 
-  VenueDetail: { venueId: string; venueName: string }; 
+// Import Socket.IO client
+import io from 'socket.io-client';
+
+// Import your screens
+import WelcomeScreen from './screens/WelcomeScreen';
+import SignUpScreen from './screens/SignUpScreen';
+import LoginScreen from './screens/LoginScreen';
+import HomeScreen from './screens/HomeScreen';
+import VenueDetailScreen from './screens/VenueDetailScreen';
+import AdminDashboardScreen from './screens/AdminDashboardScreen';
+import UserProfileScreen from './screens/UserProfileScreen';
+import TokenScreen from './screens/TokenScreen';
+
+// Define the type for your navigation stack parameter
+export type RootStackParamList = {
+  Welcome: undefined;
+  SignUp: undefined;
+  Login: undefined;
+  Home: { user: User; signOut: () => Promise<void>; pendingNotification: any | null; clearPendingNotification: () => void };
+  VenueDetail: { venueId: string; venueName: string };
+  AdminDashboard: undefined;
+  UserProfile: undefined;
+  TokenScreen: { uid: string; tokenBalance: number };
 };
 
 // Create the stack navigator
 const Stack = createStackNavigator<RootStackParamList>();
 
 // Extend the User type to include admin status and token balance
-type User = (FirebaseAuthTypes.User & { isAdmin?: boolean; tokenBalance?: number }) | null;
-
-interface Venue {
-  _id: string;
-  name: string;
-  address: string;
-  numberOfTables?: number;
-}
-
-interface Table {
-  _id: string;
-  venueId: string;
-  tableNumber: string | number;
-  esp32DeviceId?: string;
-  status: 'available' | 'occupied' | 'queued' | 'maintenance';
-  currentSessionId?: string;
-  queue: string[];
-}
+export type User = (FirebaseAuthTypes.User & { isAdmin?: boolean; tokenBalance?: number; stripeCustomerId?: string }) | null;
 
 // Backend base URL
 const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
 
-// Define the props for HomeScreen, including navigation prop
-type HomeScreenProps = StackScreenProps<RootStackParamList, 'Home'> & {
-  user: User;
-  signOut: () => Promise<void>;
-  pendingNotification: any | null;
-  clearPendingNotification: () => void;
-};
-
-// --- HomeScreen Component ---
-const HomeScreen = ({ route, navigation,user,signOut,pendingNotification, clearPendingNotification }: HomeScreenProps): JSX.Element => {
-  
-  const [location, setLocation] = useState<Location.LocationObject | null>(null);
-  const [nearbyVenues, setNearbyVenues] = useState<Venue[]>([]);
-  const [isLoadingLocations, setIsLoadingLocations] = useState<boolean>(true);
-  const [errorMsg, useStateErrorMsg] = useState<string | null>(null);
-
-  // State for new venue registration form
-  const [newVenueName, setNewVenueName] = useState<string>('');
-  const [newVenueAddress, setNewVenueAddress] = useState<string>('');
-  const [newVenueLat, setNewVenueLat] = useState<string>('');
-  const [newVenueLon, setNewVenueLon] = useState<string>('');
-  const [newVenueTablesCount, setNewVenueTablesCount] = useState<string>('');
-  const [isRegisteringVenue, setIsRegisteringVenue] = useState<boolean>(false);
-
-  // State for editing specific table
-  const [allVenues, setAllVenues] = useState<Venue[]>([]);
-  const [tablesForSelectedVenue, setTablesForSelectedVenue] = useState<Table[]>([]);
-  const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
-  const [selectedTableId, setSelectedTableId] = useState<string | null>(null); 
-  const [editTableNumber, setEditTableNumber] = useState<string>(''); 
-  const [editEsp32DeviceId, setEditEsp32DeviceId] = useState<string>(''); 
-  const [isEditingTable, setIsEditingTable] = useState<boolean>(false);
-  const [isLoadingVenuesForAdmin, setIsLoadingVenuesForAdmin] = useState<boolean>(false);
-  const [isLoadingTablesForEdit, setIsLoadingTablesForEdit] = useState<boolean>(false);
-
-  // Function to handle confirming a win
-  const handleConfirmWin = useCallback(async (data: any) => {
-    if (!user) {
-      Alert.alert('Authentication Error', 'You must be logged in to confirm a win.');
-      return;
-    }
-    console.log('[WinConfirmation] Confirming win with data:', data);
-    try {
-      const idToken = await user.getIdToken(true);
-      // Replace with your actual backend endpoint for confirming a win
-      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${data.tableId}/confirm-win`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          sessionId: data.sessionId,
-          winnerId: data.winnerId,
-          // Add any other necessary data for confirmation
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to confirm win.');
-      }
-      Alert.alert('Success', 'Win confirmed!');
-    } catch (error: any) {
-      console.error('Error confirming win:', error);
-      Alert.alert('Error', `Failed to confirm win: ${error.message}`);
-    } finally {
-      clearPendingNotification(); // Always clear the notification after handling
-    }
-  }, [user, clearPendingNotification]);
-
-  // Function to handle disputing a win
-  const handleDisputeWin = useCallback(async (data: any) => {
-    if (!user) {
-      Alert.alert('Authentication Error', 'You must be logged in to dispute a win.');
-      return;
-    }
-    console.log('[WinConfirmation] Disputing win with data:', data);
-    try {
-      const idToken = await user.getIdToken(true);
-      // Replace with your actual backend endpoint for disputing a win
-      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${data.tableId}/dispute-win`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          sessionId: data.sessionId,
-          disputerId: user.uid, // The current user is the one disputing
-          // Add any other necessary data for dispute
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to dispute win.');
-      }
-      Alert.alert('Success', 'Win dispute submitted.');
-    } catch (error: any) {
-      console.error('Error disputing win:', error);
-      Alert.alert('Error', `Failed to dispute win: ${error.message}`);
-    } finally {
-      clearPendingNotification(); // Always clear the notification after handling
-    }
-  }, [user, clearPendingNotification]);
-
-  // Effect to handle pending notifications (e.g., win confirmation)
-useEffect(() => {
-  console.log('[NotificationHandler] HomeScreen useEffect triggered. pendingNotification:', JSON.stringify(pendingNotification, null, 2));
-
-  if (pendingNotification) {
-    console.log('[NotificationHandler] Raw pendingNotification object:', pendingNotification); // <-- ADDED LOG
-
-    if (pendingNotification.data?.type === 'win_confirmation') {
-      const { winnerName, venueName, tableNumber } = pendingNotification.data;
-      console.log('[NotificationHandler] Triggering win confirmation alert for:', {
-        winnerName,
-        venueName,
-        tableNumber,
-      });
-
-      Alert.alert(
-        'Win Claimed!', // Updated title
-        `${winnerName} claims victory on Table ${tableNumber}, confirm or dispute?`, // Updated message
-        [
-          {
-            text: 'Dispute',
-            onPress: () => handleDisputeWin(pendingNotification.data),
-            style: 'destructive',
-          },
-          {
-            text: 'Confirm',
-            onPress: () => handleConfirmWin(pendingNotification.data),
-            style: 'default',
-          },
-        ],
-        { cancelable: false } // Force user to choose an option
-      );
-    } else {
-      console.log('[NotificationHandler] Handling generic notification:', pendingNotification.notification);
-
-      Alert.alert(
-        pendingNotification.notification?.title || 'New Notification',
-        pendingNotification.notification?.body || 'You have a new message.',
-        [
-          { text: 'OK', onPress: () => clearPendingNotification() }
-        ]
-      );
-    }
-  }
-}, [pendingNotification, clearPendingNotification, handleConfirmWin, handleDisputeWin]);
-
-
-  // Function to fetch user's current location
-  const requestLocationPermissionAndGetLocation = useCallback(async () => {
-    setIsLoadingLocations(true);
-    useStateErrorMsg(null);
-    try {
-      let { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        useStateErrorMsg('Permission to access location was denied. Please enable location services for this app.');
-        setIsLoadingLocations(false);
-        return;
-      }
-      let currentLocation = await Location.getCurrentPositionAsync({});
-      setLocation(currentLocation);
-      console.log('[Location] Current location:', currentLocation.coords);
-      setNewVenueLat(currentLocation.coords.latitude.toFixed(6));
-      setNewVenueLon(currentLocation.coords.longitude.toFixed(6));
-    } catch (error) {
-      console.error('[Location Error]', error);
-      useStateErrorMsg('Failed to get location. Please ensure location services are enabled.');
-    } finally {
-      setIsLoadingLocations(false);
-    }
-  }, []);
-
-  // Function to fetch nearby venues from the backend
-  const fetchNearbyVenues = useCallback(async () => {
-    if (!location || !user) {
-      return;
-    }
-
-    setIsLoadingLocations(true);
-    useStateErrorMsg(null);
-    try {
-      const idToken = await user.getIdToken(true);
-      console.log('[API] Fetching nearby venues: token retrieved. Length:', idToken.length, 'Starts with:', idToken.substring(0, 10));
-
-      const { latitude, longitude } = location.coords;
-      const radiusMiles = 5;
-
-      const backendUrl = `${BACKEND_BASE_URL}/api/venues/nearby?lat=${latitude}&lon=${longitude}&radiusMiles=${radiusMiles}`;
-
-      console.log('[API] Fetching nearby venues from:', backendUrl);
-      const response = await fetch(backendUrl, {
-        headers: {
-          'Authorization': `Bearer ${idToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.text();
-        let errorMessage = `HTTP error! status: ${response.status}. Message: ${errorData}`;
-        try {
-            const jsonError = JSON.parse(errorData);
-            errorMessage = jsonError.message || errorMessage;
-        } catch (e) {
-            // Not JSON, use raw text
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data: Venue[] = await response.json();
-      setNearbyVenues(data);
-      console.log('[API] Nearby venues fetched:', data);
-    } catch (error: any) {
-      console.error('[Fetch Venues Error]', error);
-      Alert.alert('Error', `Failed to fetch nearby pool bars: ${error.message || 'Network error'}. Please ensure your backend is running and accessible.`);
-      setNearbyVenues([]);
-    } finally {
-      setIsLoadingLocations(false);
-    }
-  }, [location, user]);
-
-  // Initial location fetch
-  useEffect(() => {
-    requestLocationPermissionAndGetLocation();
-  }, [requestLocationPermissionAndGetLocation]);
-
-  // Fetch nearby venues when location AND user are available
-  useEffect(() => {
-    if (user && location) {
-      fetchNearbyVenues();
-    }
-  }, [fetchNearbyVenues, user, location]);
-
-  // Function to fetch ALL venues for admin panel (for dropdown)
-  const fetchAllVenuesForAdmin = useCallback(async () => {
-    if (!user?.isAdmin) {
-      return;
-    }
-
-    setIsLoadingVenuesForAdmin(true);
-    try {
-      const idToken = await user.getIdToken(true);
-      console.log('[API] Fetching all venues for admin: token retrieved. Length:', idToken.length, 'Starts with:', idToken.substring(0, 10));
-
-      const response = await fetch(`${BACKEND_BASE_URL}/api/venues`, {
-        headers: {
-          'Authorization': `Bearer ${idToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.text();
-        let errorMessage = `HTTP error! status: ${response.status}. Message: ${errorData}`;
-        try {
-            const jsonError = JSON.parse(errorData);
-            errorMessage = jsonError.message || errorMessage;
-        } catch (e) {
-            // If it's not JSON, the raw text will be used
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data: Venue[] = await response.json();
-      setAllVenues(data);
-      // Automatically select the first venue if available
-      if (data.length > 0 && !selectedVenueId) {
-        setSelectedVenueId(data[0]._id);
-      }
-      console.log('[API] All venues fetched for admin:', data);
-    } catch (error: any) {
-      console.error('[Fetch All Venues Error]', error);
-      Alert.alert('Error', `Failed to load venues for admin: ${error.message}`);
-      setAllVenues([]);
-    } finally {
-      setIsLoadingVenuesForAdmin(false);
-    }
-  }, [user, selectedVenueId]); 
-
-  // Fetch all venues when admin panel is shown and user is ready
-  useEffect(() => {
-    if (user?.isAdmin) {
-      fetchAllVenuesForAdmin();
-    }
-  }, [user?.isAdmin, fetchAllVenuesForAdmin]);
-
-  // Effect to fetch tables for the currently selected venue
-  const fetchTablesForSelectedVenue = useCallback(async () => {
-    if (!selectedVenueId || !user) {
-      setTablesForSelectedVenue([]); 
-      setSelectedTableId(null); 
-      setEditTableNumber('');
-      setEditEsp32DeviceId('');
-      return;
-    }
-
-    setIsLoadingTablesForEdit(true);
-    try {
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${selectedVenueId}/tables`, {
-        headers: {
-          'Authorization': `Bearer ${idToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.text();
-        let errorMessage = `HTTP error! status: ${response.status}. Message: ${errorData}`;
-        try {
-            const jsonError = JSON.parse(errorData);
-            errorMessage = jsonError.message || errorMessage;
-        } catch (e) {
-            // Not JSON, use raw text
-        }
-        throw new Error(errorMessage);
-      }
-      const data: Table[] = await response.json();
-      setTablesForSelectedVenue(data);
-      console.log(`[API] Tables fetched for venue ${selectedVenueId}:`, data);
-
-      // Automatically select the first table if available
-      if (data.length > 0 && !selectedTableId) {
-        setSelectedTableId(data[0]._id);
-      } else if (data.length === 0) {
-        setSelectedTableId(null);
-      }
-    } catch (error: any) {
-      console.error('Error fetching tables for selected venue:', error);
-      Alert.alert('Error', `Failed to load tables for editing: ${error.message}`);
-      setTablesForSelectedVenue([]);
-      setSelectedTableId(null);
-    } finally {
-      setIsLoadingTablesForEdit(false);
-    }
-  }, [selectedVenueId, user, selectedTableId]); 
-
-  // Re-fetch tables for selected venue whenever selectedVenueId or user changes
-  useEffect(() => {
-    fetchTablesForSelectedVenue();
-  }, [fetchTablesForSelectedVenue]);
-
-  // Effect to populate edit fields when selectedTableId changes
-  useEffect(() => {
-    if (selectedTableId) {
-      const tableToEdit = tablesForSelectedVenue.find(t => t._id === selectedTableId);
-      if (tableToEdit) {
-        setEditTableNumber(String(tableToEdit.tableNumber));
-        setEditEsp32DeviceId(tableToEdit.esp32DeviceId || '');
-      }
-    } else {
-      setEditTableNumber('');
-      setEditEsp32DeviceId('');
-    }
-  }, [selectedTableId, tablesForSelectedVenue]);
-
-
-  // Handle new venue registration
-  const handleRegisterVenue = async () => {
-    if (!user) {
-      Alert.alert('Authentication Error', 'User not authenticated.');
-      return;
-    }
-    if (!newVenueName || !newVenueAddress || !newVenueLat || !newVenueLon || !newVenueTablesCount || isNaN(parseInt(newVenueTablesCount, 10))) {
-      Alert.alert('Missing Information', 'Please fill in all venue details and a valid number of tables.');
-      return;
-    }
-
-    setIsRegisteringVenue(true);
-    try {
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/venues`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          name: newVenueName,
-          address: newVenueAddress,
-          latitude: parseFloat(newVenueLat),
-          longitude: parseFloat(newVenueLon),
-          numberOfTables: parseInt(newVenueTablesCount, 10),
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to register venue.');
-      }
-
-      const registeredVenue = await response.json();
-      Alert.alert('Success', `Venue "${registeredVenue.name}" registered successfully!`);
-      console.log('Registered Venue:', registeredVenue);
-
-      setNewVenueName('');
-      setNewVenueAddress('');
-      setNewVenueTablesCount('');
-      fetchAllVenuesForAdmin(); 
-      fetchNearbyVenues(); 
-    } catch (error: any) {
-      console.error('Venue registration error:', error);
-      Alert.alert('Registration Failed', `Error: ${error.message}`);
-    } finally {
-      setIsRegisteringVenue(false);
-    }
-  };
-
-  // Handle editing an existing table
-  const handleEditTable = async () => {
-    if (!user) {
-      Alert.alert('Authentication Error', 'User not authenticated.');
-      return;
-    }
-    if (!selectedTableId) {
-      Alert.alert('Selection Error', 'Please select a table to edit.');
-      return;
-    }
-    if (!editTableNumber && !editEsp32DeviceId) {
-      Alert.alert('Input Error', 'Please provide a new table number or ESP32 Device ID.');
-      return;
-    }
-
-    setIsEditingTable(true);
-    try {
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${selectedTableId}`, {
-        method: 'PUT', 
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          tableNumber: editTableNumber,
-          esp32DeviceId: editEsp32DeviceId,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update table.');
-      }
-
-      const updatedTable = await response.json();
-      Alert.alert('Success', `Table "${updatedTable.tableNumber}" updated successfully!`);
-      console.log('Updated Table:', updatedTable);
-
-      // Re-fetch tables for the selected venue to update the list and picker
-      fetchTablesForSelectedVenue();
-    } catch (error: any) {
-      console.error('Table update error:', error);
-      Alert.alert('Update Failed', `Error: ${error.message}`);
-    } finally {
-      setIsEditingTable(false);
-    }
-  };
-
-
-  const renderVenueItem = ({ item }: { item: Venue }) => (
-    <View style={styles.venueItem}>
-      <Text style={styles.venueName}>{item.name}</Text>
-      <Text style={styles.venueAddress}>{item.address}</Text>
-      {item.numberOfTables !== undefined && (
-         <Text style={styles.venueDetails}>Tables: {item.numberOfTables}</Text>
-      )}
-      <Button
-        title="View Location"
-        onPress={() => navigation.navigate('VenueDetail', { venueId: item._id, venueName: item.name })}
-      />
-    </View>
-  );
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
-        <Text style={styles.title}>Welcome to Billiards Hub, {user?.displayName || user?.email}!</Text>
-        <Text style={styles.subtitle}>Find a pool table near you:</Text>
-        <Text style={styles.tokenBalanceText}>Tokens: {user?.tokenBalance ?? 'Loading...'}</Text>
-
-
-        <View style={styles.locationInfoContainer}>
-          {isLoadingLocations ? (
-            <ActivityIndicator size="small" color="#0000ff" />
-          ) : errorMsg ? (
-            <Text style={styles.errorText}>{errorMsg}</Text>
-          ) : location ? (
-            <Text style={styles.locationText}>
-              Your location: Lat {location.coords.latitude.toFixed(4)}, Lon {location.coords.longitude.toFixed(4)}
-            </Text>
-          ) : (
-            <Text style={styles.locationText}>Location not available.</Text>
-          )}
-        </View>
-
-        {isLoadingLocations && nearbyVenues.length === 0 ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#0000ff" />
-            <Text style={styles.loadingText}>Searching for nearby pool bars...</Text>
-          </View>
-        ) : nearbyVenues.length > 0 ? (
-          <>
-            <Text style={styles.sectionTitle}>Pool Bars within 5 miles:</Text>
-            <FlatList
-              data={nearbyVenues}
-              renderItem={renderVenueItem}
-              keyExtractor={item => item._id}
-              contentContainerStyle={styles.venueList}
-              scrollEnabled={false}
-            />
-          </>
-        ) : (
-          <Text style={styles.noVenuesText}>No pool bars found nearby. Try again later or adjust location.</Text>
-        )}
-
-        {/* Admin Panel */}
-        {user?.isAdmin && (
-          <View style={styles.adminPanel}>
-            <Text style={styles.adminPanelTitle}>Admin Panel</Text>
-
-            {/* Register New Venue Section (no change) */}
-            <View style={styles.adminSection}>
-              <Text style={styles.adminSectionTitle}>Register New Venue</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Venue Name"
-                value={newVenueName}
-                onChangeText={setNewVenueName}
-                autoCapitalize="words"
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Address"
-                value={newVenueAddress}
-                onChangeText={setNewVenueAddress}
-                autoCapitalize="words"
-              />
-              <View style={styles.rowInputs}>
-                <TextInput
-                  style={[styles.input, styles.halfInput]}
-                  placeholder="Latitude"
-                  value={newVenueLat}
-                  onChangeText={setNewVenueLat}
-                  keyboardType="numeric"
-                />
-                <TextInput
-                  style={[styles.input, styles.halfInput]}
-                  placeholder="Longitude"
-                  value={newVenueLon}
-                  onChangeText={setNewVenueLon}
-                  keyboardType="numeric"
-                />
-              </View>
-              <TextInput
-                style={styles.input}
-                placeholder="Initial Number of Tables (e.g., 5)"
-                value={newVenueTablesCount}
-                onChangeText={setNewVenueTablesCount}
-                keyboardType="numeric"
-              />
-              <TouchableOpacity
-                style={styles.registerButton}
-                onPress={handleRegisterVenue}
-                disabled={isRegisteringVenue}
-              >
-                {isRegisteringVenue ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.registerButtonText}>Register Venue</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {/* Edit Specific Table Section (CHANGED) */}
-            <View style={styles.adminSection}>
-              <Text style={styles.adminSectionTitle}>Edit Specific Table</Text>
-
-              {isLoadingVenuesForAdmin ? (
-                <ActivityIndicator size="small" color="#0000ff" />
-              ) : allVenues.length > 0 ? (
-                <>
-                  <Text style={styles.pickerLabel}>Select Venue:</Text>
-                  <Picker
-                    selectedValue={selectedVenueId}
-                    onValueChange={(itemValue: string | null) => {
-                      setSelectedVenueId(itemValue);
-                      setSelectedTableId(null); // Reset selected table when venue changes
-                    }}
-                    style={styles.picker}
-                    itemStyle={styles.pickerItem}
-                  >
-                    {allVenues.map((venue) => (
-                      <Picker.Item key={venue._id} label={venue.name} value={venue._id} />
-                    ))}
-                  </Picker>
-
-                  {selectedVenueId && (
-                    isLoadingTablesForEdit ? (
-                      <ActivityIndicator size="small" color="#0000ff" style={{ marginTop: 10 }} />
-                    ) : tablesForSelectedVenue.length > 0 ? (
-                      <>
-                        <Text style={styles.pickerLabel}>Select Table:</Text>
-                        <Picker
-                          selectedValue={selectedTableId}
-                          onValueChange={(itemValue: string | null) => setSelectedTableId(itemValue)}
-                          style={styles.picker}
-                          itemStyle={styles.pickerItem}
-                        >
-                          {tablesForSelectedVenue.map((table) => (
-                            <Picker.Item key={table._id} label={`Table ${table.tableNumber} (ID: ${table.esp32DeviceId || 'N/A'})`} value={table._id} />
-                          ))}
-                        </Picker>
-                      </>
-                    ) : (
-                      <Text style={styles.infoText}>No tables found for this venue. Register some first.</Text>
-                    )
-                  )}
-                </>
-              ) : (
-                <Text style={styles.infoText}>No venues available. Register a venue first.</Text>
-              )}
-
-              {selectedTableId && ( // Only show inputs if a table is selected
-                <>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="New Table Number (e.g., A1, 2)"
-                    value={editTableNumber}
-                    onChangeText={setEditTableNumber}
-                    autoCapitalize="words"
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="New ESP32 Device ID (Unique Identifier)"
-                    value={editEsp32DeviceId}
-                    onChangeText={setEditEsp32DeviceId}
-                  />
-                  <TouchableOpacity
-                    style={styles.registerButton} // Re-using style for now
-                    onPress={handleEditTable}
-                    disabled={isEditingTable || !selectedTableId || (!editTableNumber && !editEsp32DeviceId)}
-                  >
-                    {isEditingTable ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text style={styles.registerButtonText}>Update Table</Text>
-                    )}
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
-
-          </View>
-        )}
-
-        <View style={styles.buttonContainer}>
-          <Button title="Sign Out" onPress={signOut} />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
-  );
-};
-// --- End HomeScreen Component ---
-
-// --- Main App Component (now handles navigation) ---
+// --- Main App Component ---
 const App = (): JSX.Element => {
   const [initializing, setInitializing] = useState<boolean>(true);
   const [user, setUser] = useState<User>(null);
   const [isProfileLoading, setIsProfileLoading] = useState<boolean>(false);
-  const [pendingNotification, setPendingNotification] = useState<any | null>(null); // New state for pending notifications
-
-  // Use a ref to track if authentication processing is currently underway
-  // This helps prevent redundant execution of onAuthStateChanged logic if it fires multiple times rapidly.
+  const [pendingNotification, setPendingNotification] = useState<any | null>(null);
   const isAuthProcessing = useRef(false);
+  const socketRef = useRef<any>(null); // Ref to hold the socket instance
 
   useEffect(() => {
     GoogleSignin.configure({
@@ -745,11 +79,9 @@ const App = (): JSX.Element => {
     console.log('[GoogleSignin] Configured');
   }, []);
 
-  // Function to request notification permissions and get FCM token
   const requestUserPermissionAndGetToken = useCallback(async () => {
     console.log('[FCM_DEBUG] Attempting to request notification permissions.');
     try {
-      // Request permission for iOS
       const authStatus = await messaging().requestPermission();
       const enabled =
         authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
@@ -759,11 +91,10 @@ const App = (): JSX.Element => {
 
       if (enabled) {
         console.log('[FCM_DEBUG] Permissions granted. Registering device for remote messages...');
-        await messaging().registerDeviceForRemoteMessages(); 
+        await messaging().registerDeviceForRemoteMessages();
         console.log('[FCM_DEBUG] Device registered for remote messages.');
 
         try {
-          // Get the FCM token
           const fcmToken = await messaging().getToken();
           console.log('[FCM_DEBUG] FCM Token obtained:', fcmToken);
           return fcmToken;
@@ -781,11 +112,10 @@ const App = (): JSX.Element => {
     }
   }, []);
 
-  // Function to send FCM Token to Backend
   const sendFcmTokenToBackend = async (uid: string, token: string, idToken: string) => {
     console.log('[FCM_DEBUG] Attempting to send FCM token to backend for user:', uid);
     try {
-      const response = await fetch(`${BACKEND_BASE_URL}/api/users/update-fcm-token`, {
+      const response = await fetch(`${BACKEND_BASE_URL}/api/user/update-fcm-token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -804,12 +134,10 @@ const App = (): JSX.Element => {
     }
   };
 
-  // Handle incoming messages when the app is in the foreground
   useEffect(() => {
     console.log('[FCM_DEBUG] Setting up onMessage listener for foreground notifications.');
     const unsubscribe = messaging().onMessage(async remoteMessage => {
       console.log('[FCM_DEBUG] FCM Message received in foreground:', JSON.stringify(remoteMessage, null, 2));
-      // For foreground, we can directly show the alert
       Alert.alert(
         remoteMessage.notification?.title || 'New Notification',
         remoteMessage.notification?.body || 'You have a new message.'
@@ -818,23 +146,20 @@ const App = (): JSX.Element => {
 
     return () => {
       console.log('[FCM_DEBUG] Cleaning up onMessage listener.');
-      unsubscribe(); // Unsubscribe when component unmounts or effect re-runs
+      unsubscribe();
     };
   }, []);
 
-  // Handle notifications when app is in background or killed state
   useEffect(() => {
-    // Listener for when app is in background and opened by tapping notification
     const unsubscribeOnNotificationOpenedApp = messaging().onNotificationOpenedApp(remoteMessage => {
       console.log('[FCM_DEBUG] Notification caused app to open from background state:', JSON.stringify(remoteMessage, null, 2));
-      setPendingNotification(remoteMessage); // Store for later display
+      setPendingNotification(remoteMessage);
     });
 
-    // Check if app was opened from a quit state by tapping a notification
     messaging().getInitialNotification().then(remoteMessage => {
       if (remoteMessage) {
         console.log('[FCM_DEBUG] Notification caused app to open from quit state:', JSON.stringify(remoteMessage, null, 2));
-        setPendingNotification(remoteMessage); // Store for later display
+        setPendingNotification(remoteMessage);
       }
     });
 
@@ -843,14 +168,39 @@ const App = (): JSX.Element => {
     };
   }, []);
 
-  // Function to clear pending notification after it's handled
   const clearPendingNotification = useCallback(() => {
     setPendingNotification(null);
   }, []);
 
-  /**
-   * Fetches user profile (including isAdmin status and tokenBalance) from backend after Firebase auth.
-   */
+  const syncUserWithBackend = useCallback(async (firebaseUser: FirebaseAuthTypes.User) => {
+    try {
+      const idToken = await firebaseUser.getIdToken(true);
+      console.log('[User Sync] Attempting to sync user profile with backend.');
+      const response = await fetch(`${BACKEND_BASE_URL}/api/user/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to sync user profile.');
+      }
+
+      const syncData = await response.json();
+      console.log('[User Sync] User synced successfully:', syncData.user);
+      return syncData.user;
+    } catch (error: any) {
+      console.error('[User Sync Error]', error);
+      Alert.alert('User Sync Error', `Could not sync user profile: ${error.message}.`);
+      return null;
+    }
+  }, []);
+
+
   const fetchUserProfile = useCallback(async (firebaseUser: FirebaseAuthTypes.User) => {
     setIsProfileLoading(true);
     try {
@@ -882,61 +232,146 @@ const App = (): JSX.Element => {
     }
   }, []);
 
-  // Make onAuthStateChanged a useCallback to ensure its reference stability
   const onAuthStateChanged = useCallback(async (firebaseUser: FirebaseAuthTypes.User | null) => {
-    // This debug log should ALWAYS show up if this function is called.
     console.log(`[AUTH_DEBUG_MAIN] onAuthStateChanged invoked. User: ${firebaseUser ? firebaseUser.uid : 'null'}. Initializing: ${initializing}. isAuthProcessing: ${isAuthProcessing.current}`);
 
-    // If processing is already underway, just return to prevent re-entry loops
     if (isAuthProcessing.current) {
         console.log('[AUTH_DEBUG_MAIN] Already processing an auth state change. Skipping redundant call.');
         return;
     }
 
-    isAuthProcessing.current = true; // Set flag to true to indicate processing has started
+    isAuthProcessing.current = true;
 
     try {
       if (firebaseUser) {
-        console.log('[AUTH_DEBUG_MAIN] User is present. Starting profile fetch and FCM token update.');
+        console.log('[AUTH_DEBUG_MAIN] User is present. Starting sync, profile fetch and FCM token update.');
+
+        // Step 1: Sync user with backend (ensures MongoDB document exists/is updated)
+        const syncedUser = await syncUserWithBackend(firebaseUser);
+        if (!syncedUser) {
+          throw new Error('Failed to sync user with backend.');
+        }
+
+        // Step 2: Fetch full user profile from backend (gets latest tokenBalance, isAdmin, etc.)
         const profile = await fetchUserProfile(firebaseUser);
+        if (!profile) {
+          throw new Error('Failed to fetch user profile after sync.');
+        }
+
+        // Directly augment the firebaseUser object
         (firebaseUser as User).isAdmin = profile.isAdmin;
         (firebaseUser as User).tokenBalance = profile.tokenBalance;
-        setUser(firebaseUser as User); // This sets the authenticated user in state
+        (firebaseUser as User).stripeCustomerId = profile.stripeCustomerId;
 
-        const fcmToken = await requestUserPermissionAndGetToken(); // This now has more detailed logs
+        console.log(`[AUTH_DEBUG_MAIN] Setting user state. New tokenBalance: ${firebaseUser.tokenBalance}`);
+        console.log(`[AUTH_DEBUG_MAIN] Type of firebaseUser before setUser: ${typeof firebaseUser}`);
+        console.log(`[AUTH_DEBUG_MAIN] Does firebaseUser have getIdToken before setUser? ${typeof (firebaseUser as any).getIdToken}`);
+
+        setUser(firebaseUser as User); // Set the augmented Firebase User object
+
+        // Step 3: Send FCM token to backend
+        const fcmToken = await requestUserPermissionAndGetToken();
         if (fcmToken) {
-          await sendFcmTokenToBackend(firebaseUser.uid, fcmToken, await firebaseUser.getIdToken(true)); // This now has more detailed logs
+          await sendFcmTokenToBackend(firebaseUser.uid, fcmToken, await firebaseUser.getIdToken(true));
         }
-        console.log('[AUTH_DEBUG_MAIN] Profile and FCM process completed for existing user.');
+        console.log('[AUTH_DEBUG_MAIN] Profile, FCM, and sync process completed for existing user.');
 
       } else {
         console.log('[AUTH_DEBUG_MAIN] User is null. Setting user to null.');
-        setUser(null); // Clear user state if no Firebase user
+        setUser(null);
       }
     } catch (error) {
       console.error('[AUTH_DEBUG_MAIN] Error during auth state processing:', error);
-      // Ensure user is set to null or appropriate error state on failure
       setUser(null);
       Alert.alert('Authentication Error', 'Failed to process authentication. Please try again.');
     } finally {
-      // Ensure initializing is set to false only once for the initial load
       if (initializing) {
         setInitializing(false);
         console.log('[AUTH_DEBUG_MAIN] setInitializing(false) called.');
       }
-      isAuthProcessing.current = false; // Reset processing flag
+      isAuthProcessing.current = false;
       console.log('[AUTH_DEBUG_MAIN] Auth state processing finished. isAuthProcessing set to false.');
     }
-  }, [initializing, fetchUserProfile, requestUserPermissionAndGetToken, sendFcmTokenToBackend]);
+  }, [initializing, syncUserWithBackend, fetchUserProfile, requestUserPermissionAndGetToken, sendFcmTokenToBackend]);
 
   useEffect(() => {
     console.log('[AUTH_DEBUG_EFFECT] Setting up auth state listener.');
     const subscriber = auth().onAuthStateChanged(onAuthStateChanged);
     return () => {
       console.log('[AUTH_DEBUG_EFFECT] Cleaning up auth state listener.');
-      subscriber(); // Unsubscribe when component unmounts or effect re-runs
+      subscriber();
     };
-  }, [onAuthStateChanged]); // Dependency on the memoized onAuthStateChanged callback
+  }, [onAuthStateChanged]);
+
+  // Socket.IO connection and listener for token updates
+  useEffect(() => {
+    console.log(`[Socket.IO Effect] Running. User: ${user?.uid}, socketRef.current: ${socketRef.current ? 'exists' : 'null'}`);
+
+    // Cleanup existing socket connection if it exists
+    if (socketRef.current) {
+      console.log('[Socket.IO Effect] Disconnecting existing socket.');
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+
+    // Establish new connection only if user is authenticated AND has a UID
+    if (user?.uid) { // Use optional chaining to safely check user.uid
+      console.log('[Socket.IO Effect] User is present with UID. Attempting to connect new socket for user:', user.uid);
+      socketRef.current = io(BACKEND_BASE_URL, {
+        transports: ['websocket'], // Force WebSocket transport
+        // Do NOT pass userId in query here, we will emit 'registerForUpdates' later
+      });
+
+      socketRef.current.on('connect', () => {
+        console.log('[Socket.IO] Connected to backend server:', socketRef.current.id);
+        // IMPORTANT: Only register for updates AFTER connection is established and user.uid is available
+        if (user?.uid) {
+          console.log(`[Socket.IO] Emitting 'registerForUpdates' for user: ${user.uid}`);
+          socketRef.current.emit('registerForUpdates', user.uid);
+        } else {
+          console.warn('[Socket.IO] User UID not available during connect event, cannot register for updates.');
+        }
+      });
+
+      socketRef.current.on('tokenBalanceUpdate', (data: { newBalance: number }) => {
+        console.log(`[Socket.IO] Received tokenBalanceUpdate event: ${data.newBalance}.`);
+        setUser(prevUser => {
+          if (prevUser) {
+            console.log(`[Socket.IO] Updating user state via tokenBalanceUpdate: Old balance ${prevUser.tokenBalance}, New balance ${data.newBalance}`);
+            const updatedUser = { ...prevUser, tokenBalance: data.newBalance };
+            console.log(`[Socket.IO] User state updated in App.tsx. New user object tokenBalance: ${updatedUser.tokenBalance}`);
+            return updatedUser;
+          }
+          return null;
+        });
+      });
+
+      socketRef.current.on('disconnect', (reason: string) => {
+        console.log('[Socket.IO] Disconnected from backend server. Reason:', reason);
+      });
+
+      socketRef.current.on('connect_error', (error: any) => {
+        console.error('[Socket.IO] Connection error:', error.message);
+      });
+
+      socketRef.current.on('error', (error: any) => {
+        console.error('[Socket.IO] Generic socket error:', error);
+      });
+
+      // Return a cleanup function for this specific effect instance
+      return () => {
+        if (socketRef.current) {
+          console.log('[Socket.IO Effect Cleanup] Disconnecting socket on unmount/dependency change.');
+          socketRef.current.disconnect();
+          socketRef.current = null;
+        }
+      };
+    } else {
+      console.log('[Socket.IO Effect] User is null or UID missing. No socket connection attempted.');
+    }
+    return undefined; // No specific cleanup needed if no connection was established
+  }, [user?.uid]); // DEPEND ONLY ON user.uid to trigger connection/disconnection
+
 
   async function onGoogleButtonPress(): Promise<void> {
     try {
@@ -990,7 +425,6 @@ const App = (): JSX.Element => {
     }
   }
 
-  // Display loading screen while initializing or profile is loading
   if (initializing || isProfileLoading) {
     return (
       <View style={styles.container}>
@@ -1002,7 +436,6 @@ const App = (): JSX.Element => {
     );
   }
 
-  // Display sign-in button if no user is authenticated
   if (!user) {
     return (
       <SafeAreaView style={styles.container}>
@@ -1019,28 +452,56 @@ const App = (): JSX.Element => {
     );
   }
 
-  // Display main app content if user is authenticated and profile loaded
   return (
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName="Home">
-        <Stack.Screen name="Home" options={{ headerShown: false }}>
-          {(props) => (
-            <HomeScreen
-              {...props} // navigation, route, etc.
-              user={user}
-              signOut={signOut}
-              pendingNotification={pendingNotification}
-              clearPendingNotification={clearPendingNotification}
-            />
-          )}
-        </Stack.Screen>
-        <Stack.Screen
-          name="VenueDetail"
-          component={VenueDetailScreen}
-          options={({ route }) => ({ title: route.params.venueName || 'Venue Details' })}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <StripeProvider
+      publishableKey="pk_test_51RauBOQXbI6EW0XUi1DeT8vKI3fS8Z7hGJyQs5jTjFlSdAWqbkQNOo54QMMYycw83lcrHMWnggZPvix5FNb0BeRk00Lu1rexTy" // REPLACE THIS WITH YOUR ACTUAL STRIPE PUBLISHABLE KEY
+      // merchantIdentifier="merchant.com.your-app-name" // Optional: Required for Apple Pay
+      // urlScheme="your-app-url-scheme" // Optional: Required for 3D Secure and other redirects
+    >
+      <NavigationContainer>
+        <Stack.Navigator initialRouteName="Home">
+          {/* Authentication Screens (if you have them, uncomment and adjust paths) */}
+          {/* <Stack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }} /> */}
+          {/* <Stack.Screen name="SignUp" component={SignUpScreen} options={{ headerShown: false }} /> */}
+          {/* <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} /> */}
+
+          <Stack.Screen name="Home" options={{ headerShown: false }}>
+            {(props) => (
+              <HomeScreen
+                {...props}
+                user={user} // Pass the augmented Firebase User object
+                signOut={signOut}
+                pendingNotification={pendingNotification}
+                clearPendingNotification={clearPendingNotification}
+              />
+            )}
+          </Stack.Screen>
+          <Stack.Screen
+            name="VenueDetail"
+            component={VenueDetailScreen}
+            options={({ route }) => ({ title: route.params.venueName || 'Venue Details' })}
+          />
+          {/* Other screens (uncomment and adjust paths as needed) */}
+          {/* <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} /> */}
+          {/* <Stack.Screen name="UserProfile" component={UserProfileScreen} /> */}
+
+          {/* NEW: TokenScreen */}
+          <Stack.Screen
+            name="TokenScreen"
+            options={{ title: 'Load Tokens' }}
+          >
+            {(props) => (
+              <TokenScreen
+                {...props}
+                // Pass only serializable uid and tokenBalance
+                user={{ uid: user.uid, tokenBalance: user.tokenBalance ?? 0 }}
+              />
+            )}
+          </Stack.Screen>
+
+        </Stack.Navigator>
+      </NavigationContainer>
+    </StripeProvider>
   );
 };
 
@@ -1186,7 +647,7 @@ const styles = StyleSheet.create({
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowRadius: 3,
     elevation: 2,
   },
   adminSectionTitle: {
@@ -1237,7 +698,7 @@ const styles = StyleSheet.create({
     borderColor: '#ccc',
     borderRadius: 8,
   },
-  pickerLabel: { 
+  pickerLabel: {
     fontSize: 16,
     color: '#555',
     marginBottom: 5,

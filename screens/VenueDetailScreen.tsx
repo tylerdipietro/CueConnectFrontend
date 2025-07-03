@@ -89,7 +89,7 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
           return;
         }
 
-        const response = await fetch(`${BACKEND_BASE_URL}/api/users/sync`, {
+        const response = await fetch(`${BACKEND_BASE_URL}/api/user/sync`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${idToken}`,
