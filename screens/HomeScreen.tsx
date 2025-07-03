@@ -27,6 +27,7 @@ interface Venue {
   name: string;
   address: string;
   numberOfTables?: number;
+  perGameCost?: number; // Added perGameCost
 }
 
 interface Table {
@@ -64,6 +65,7 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
   const [newVenueLat, setNewVenueLat] = useState<string>('');
   const [newVenueLon, setNewVenueLon] = useState<string>('');
   const [newVenueTablesCount, setNewVenueTablesCount] = useState<string>('');
+  const [newVenuePerGameCost, setNewVenuePerGameCost] = useState<string>('10'); // NEW: perGameCost
   const [isRegisteringVenue, setIsRegisteringVenue] = useState<boolean>(false);
 
   // State for editing specific table
@@ -76,6 +78,16 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
   const [isEditingTable, setIsEditingTable] = useState<boolean>(false);
   const [isLoadingVenuesForAdmin, setIsLoadingVenuesForAdmin] = useState<boolean>(false);
   const [isLoadingTablesForEdit, setIsLoadingTablesForEdit] = useState<boolean>(false);
+
+  // State for editing venue details (including perGameCost)
+  const [editVenueName, setEditVenueName] = useState<string>('');
+  const [editVenueAddress, setEditVenueAddress] = useState<string>('');
+  const [editVenueLat, setEditVenueLat] = useState<string>('');
+  const [editVenueLon, setEditVenueLon] = useState<string>('');
+  const [editVenueTablesCount, setEditVenueTablesCount] = useState<string>('');
+  const [editVenuePerGameCost, setEditVenuePerGameCost] = useState<string>(''); // NEW: perGameCost for editing
+  const [isEditingVenue, setIsEditingVenue] = useState<boolean>(false);
+
 
   // Set header options dynamically
   useEffect(() => {
@@ -340,6 +352,13 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
       setAllVenues(data);
       if (data.length > 0 && !selectedVenueId) {
         setSelectedVenueId(data[0]._id);
+        // Also set initial values for venue edit fields
+        setEditVenueName(data[0].name);
+        setEditVenueAddress(data[0].address);
+        setEditVenueLat(data[0].location?.coordinates?.[1]?.toFixed(6) || '');
+        setEditVenueLon(data[0].location?.coordinates?.[0]?.toFixed(6) || '');
+        setEditVenueTablesCount(String(data[0].numberOfTables ?? ''));
+        setEditVenuePerGameCost(String(data[0].perGameCost ?? '10')); // Set perGameCost
       }
       console.log('[API] All venues fetched for admin:', data);
     } catch (error: any) {
@@ -359,6 +378,21 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
       console.log('[HomeScreen Effect] Skipping fetchAllVenuesForAdmin: user not admin or not ready.', { isAdmin: user?.isAdmin, userReady: !!user?.uid });
     }
   }, [user?.isAdmin, user?.uid, fetchAllVenuesForAdmin]); // Depend on user.isAdmin and user.uid
+
+  // Effect to update venue edit fields when selectedVenueId changes
+  useEffect(() => {
+    if (selectedVenueId) {
+      const venueToEdit = allVenues.find(v => v._id === selectedVenueId);
+      if (venueToEdit) {
+        setEditVenueName(venueToEdit.name);
+        setEditVenueAddress(venueToEdit.address);
+        setEditVenueLat(venueToEdit.location?.coordinates?.[1]?.toFixed(6) || '');
+        setEditVenueLon(venueToEdit.location?.coordinates?.[0]?.toFixed(6) || '');
+        setEditVenueTablesCount(String(venueToEdit.numberOfTables ?? ''));
+        setEditVenuePerGameCost(String(venueToEdit.perGameCost ?? '10')); // Update perGameCost
+      }
+    }
+  }, [selectedVenueId, allVenues]);
 
 
   const fetchTablesForSelectedVenue = useCallback(async () => {
@@ -442,8 +476,8 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
       Alert.alert('Authentication Error', 'User not authenticated.');
       return;
     }
-    if (!newVenueName || !newVenueAddress || !newVenueLat || !newVenueLon || !newVenueTablesCount || isNaN(parseInt(newVenueTablesCount, 10))) {
-      Alert.alert('Missing Information', 'Please fill in all venue details and a valid number of tables.');
+    if (!newVenueName || !newVenueAddress || !newVenueLat || !newVenueLon || !newVenueTablesCount || isNaN(parseInt(newVenueTablesCount, 10)) || isNaN(parseInt(newVenuePerGameCost, 10))) {
+      Alert.alert('Missing Information', 'Please fill in all venue details, a valid number of tables, and a valid per game cost.');
       return;
     }
 
@@ -465,6 +499,7 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
           latitude: parseFloat(newVenueLat),
           longitude: parseFloat(newVenueLon),
           numberOfTables: parseInt(newVenueTablesCount, 10),
+          perGameCost: parseInt(newVenuePerGameCost, 10), // NEW: Pass perGameCost
         }),
       });
 
@@ -480,6 +515,7 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
       setNewVenueName('');
       setNewVenueAddress('');
       setNewVenueTablesCount('');
+      setNewVenuePerGameCost('10'); // Reset perGameCost
       fetchAllVenuesForAdmin();
       fetchNearbyVenues();
     } catch (error: any) {
@@ -489,6 +525,58 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
       setIsRegisteringVenue(false);
     }
   };
+
+  const handleEditVenue = async () => {
+    if (!user || !user.uid || !selectedVenueId) {
+      Alert.alert('Authentication Error', 'User not authenticated or no venue selected.');
+      return;
+    }
+    if (!editVenueName || !editVenueAddress || !editVenueLat || !editVenueLon || !editVenueTablesCount || isNaN(parseInt(editVenueTablesCount, 10)) || isNaN(parseInt(editVenuePerGameCost, 10))) {
+      Alert.alert('Missing Information', 'Please fill in all venue details, a valid number of tables, and a valid per game cost.');
+      return;
+    }
+
+    setIsEditingVenue(true);
+    try {
+      console.log('[HandleEditVenue Debug] User object before getIdToken:', user);
+      console.log('[HandleEditVenue Debug] Type of user:', typeof user);
+      console.log('[HandleEditVenue Debug] Does user have getIdToken?', typeof (user as any).getIdToken);
+      const idToken = await user.getIdToken(true);
+      const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${selectedVenueId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          name: editVenueName,
+          address: editVenueAddress,
+          latitude: parseFloat(editVenueLat),
+          longitude: parseFloat(editVenueLon),
+          numberOfTables: parseInt(editVenueTablesCount, 10),
+          perGameCost: parseInt(editVenuePerGameCost, 10), // NEW: Pass perGameCost
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to update venue.');
+      }
+
+      const updatedVenue = await response.json();
+      Alert.alert('Success', `Venue "${updatedVenue.name}" updated successfully!`);
+      console.log('Updated Venue:', updatedVenue);
+
+      fetchAllVenuesForAdmin(); // Refresh the list
+      fetchNearbyVenues(); // Refresh nearby venues
+    } catch (error: any) {
+      console.error('Venue update error:', error);
+      Alert.alert('Update Failed', `Error: ${error.message}`);
+    } finally {
+      setIsEditingVenue(false);
+    }
+  };
+
 
   const handleEditTable = async () => {
     if (!user || !user.uid) {
@@ -548,6 +636,9 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
       {item.numberOfTables !== undefined && (
          <Text style={styles.venueDetails}>Tables: {item.numberOfTables}</Text>
       )}
+      {item.perGameCost !== undefined && (
+         <Text style={styles.venueDetails}>Cost per game: {item.perGameCost} tokens</Text> // Display perGameCost
+      )}
       <Button
         title="View Location"
         onPress={() => navigation.navigate('VenueDetail', { venueId: item._id, venueName: item.name })}
@@ -602,7 +693,7 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
           <View style={styles.adminPanel}>
             <Text style={styles.adminPanelTitle}>Admin Panel</Text>
 
-            {/* Register New Venue Section (no change) */}
+            {/* Register New Venue Section */}
             <View style={styles.adminSection}>
               <Text style={styles.adminSectionTitle}>Register New Venue</Text>
               <TextInput
@@ -642,6 +733,13 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
                 onChangeText={setNewVenueTablesCount}
                 keyboardType="numeric"
               />
+              <TextInput // NEW: perGameCost input
+                style={styles.input}
+                placeholder="Cost per Game (Tokens, e.g., 10)"
+                value={newVenuePerGameCost}
+                onChangeText={setNewVenuePerGameCost}
+                keyboardType="numeric"
+              />
               <TouchableOpacity
                 style={styles.registerButton}
                 onPress={handleRegisterVenue}
@@ -655,15 +753,103 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
               </TouchableOpacity>
             </View>
 
-            {/* Edit Specific Table Section (CHANGED) */}
+            {/* Edit Specific Venue Section */}
             <View style={styles.adminSection}>
-              <Text style={styles.adminSectionTitle}>Edit Specific Table</Text>
+              <Text style={styles.adminSectionTitle}>Edit Venue Details</Text>
+              {isLoadingVenuesForAdmin ? (
+                <ActivityIndicator size="small" color="#0000ff" />
+              ) : allVenues.length > 0 ? (
+                <>
+                  <Text style={styles.pickerLabel}>Select Venue to Edit:</Text>
+                  <Picker
+                    selectedValue={selectedVenueId}
+                    onValueChange={(itemValue: string | null) => {
+                      setSelectedVenueId(itemValue);
+                      setSelectedTableId(null); // Reset table selection when venue changes
+                    }}
+                    style={styles.picker}
+                    itemStyle={styles.pickerItem}
+                  >
+                    {allVenues.map((venue) => (
+                      <Picker.Item key={venue._id} label={venue.name} value={venue._id} />
+                    ))}
+                  </Picker>
+
+                  {selectedVenueId && (
+                    <>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Venue Name"
+                        value={editVenueName}
+                        onChangeText={setEditVenueName}
+                        autoCapitalize="words"
+                      />
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Address"
+                        value={editVenueAddress}
+                        onChangeText={setEditVenueAddress}
+                        autoCapitalize="words"
+                      />
+                      <View style={styles.rowInputs}>
+                        <TextInput
+                          style={[styles.input, styles.halfInput]}
+                          placeholder="Latitude"
+                          value={editVenueLat}
+                          onChangeText={setEditVenueLat}
+                          keyboardType="numeric"
+                        />
+                        <TextInput
+                          style={[styles.input, styles.halfInput]}
+                          placeholder="Longitude"
+                          value={editVenueLon}
+                          onChangeText={setEditVenueLon}
+                          keyboardType="numeric"
+                        />
+                      </View>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Number of Tables (e.g., 5)"
+                        value={editVenueTablesCount}
+                        onChangeText={setEditVenueTablesCount}
+                        keyboardType="numeric"
+                      />
+                      <TextInput // NEW: perGameCost input for editing
+                        style={styles.input}
+                        placeholder="Cost per Game (Tokens, e.g., 10)"
+                        value={editVenuePerGameCost}
+                        onChangeText={setEditVenuePerGameCost}
+                        keyboardType="numeric"
+                      />
+                      <TouchableOpacity
+                        style={styles.registerButton}
+                        onPress={handleEditVenue}
+                        disabled={isEditingVenue}
+                      >
+                        {isEditingVenue ? (
+                          <ActivityIndicator color="#fff" />
+                        ) : (
+                          <Text style={styles.registerButtonText}>Update Venue</Text>
+                        )}
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </>
+              ) : (
+                <Text style={styles.infoText}>No venues available. Register a venue first.</Text>
+              )}
+            </View>
+
+
+            {/* Edit Specific Table Section */}
+            <View style={styles.adminSection}>
+              <Text style={styles.adminSectionTitle}>Edit Specific Table (ESP32 ID)</Text>
 
               {isLoadingVenuesForAdmin ? (
                 <ActivityIndicator size="small" color="#0000ff" />
               ) : allVenues.length > 0 ? (
                 <>
-                  <Text style={styles.pickerLabel}>Select Venue:</Text>
+                  <Text style={styles.pickerLabel}>Select Venue for Table:</Text>
                   <Picker
                     selectedValue={selectedVenueId}
                     onValueChange={(itemValue: string | null) => {

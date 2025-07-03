@@ -17,7 +17,7 @@ import { Picker } from '@react-native-picker/picker';
 
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
 import messaging from '@react-native-firebase/messaging';
-import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin';
+import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google_signin';
 import * as Location from 'expo-location';
 
 // Import navigation components
@@ -25,7 +25,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, StackScreenProps } from '@react-navigation/stack';
 
 // Import Stripe Provider
-import { StripeProvider } from '@stripe/stripe-react-native';
+import { StripeProvider } from '@stripe/stripe-native'; // Corrected import for standalone Stripe
 
 // Import Socket.IO client
 import io from 'socket.io-client';
@@ -39,8 +39,9 @@ import VenueDetailScreen from './screens/VenueDetailScreen';
 import AdminDashboardScreen from './screens/AdminDashboardScreen';
 import UserProfileScreen from './screens/UserProfileScreen';
 import TokenScreen from './screens/TokenScreen';
+import PayForTableScreen from './screens/PayForTableScreen'; // NEW: Import PayForTableScreen
 
-// Define the type for your navigation stack parameter
+// Define the type for your navigation stack parameters
 export type RootStackParamList = {
   Welcome: undefined;
   SignUp: undefined;
@@ -50,6 +51,15 @@ export type RootStackParamList = {
   AdminDashboard: undefined;
   UserProfile: undefined;
   TokenScreen: { uid: string; tokenBalance: number };
+  // NEW: Parameters for PayForTableScreen
+  PayForTable: {
+    tableId: string;
+    tableNumber: string | number;
+    venueId: string;
+    venueName: string;
+    perGameCost: number;
+    esp32DeviceId?: string; // Optional, as not all tables might have one
+  };
 };
 
 // Create the stack navigator
@@ -498,6 +508,13 @@ const App = (): JSX.Element => {
               />
             )}
           </Stack.Screen>
+
+          {/* NEW: PayForTableScreen */}
+          <Stack.Screen
+            name="PayForTable"
+            component={PayForTableScreen}
+            options={{ title: 'Pay for Table' }}
+          />
 
         </Stack.Navigator>
       </NavigationContainer>
