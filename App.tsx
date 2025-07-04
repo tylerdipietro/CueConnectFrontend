@@ -17,15 +17,15 @@ import { Picker } from '@react-native-picker/picker';
 
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
 import messaging from '@react-native-firebase/messaging';
-import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google_signin';
+import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin';
 import * as Location from 'expo-location';
 
 // Import navigation components
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, StackScreenProps } from '@react-navigation/stack';
 
-// Import Stripe Provider
-import { StripeProvider } from '@stripe/stripe-native'; // Corrected import for standalone Stripe
+// Import Stripe Provider (RE-INCLUDED)
+import { StripeProvider } from '@stripe/stripe-react-native';
 
 // Import Socket.IO client
 import io from 'socket.io-client';
@@ -39,9 +39,9 @@ import VenueDetailScreen from './screens/VenueDetailScreen';
 import AdminDashboardScreen from './screens/AdminDashboardScreen';
 import UserProfileScreen from './screens/UserProfileScreen';
 import TokenScreen from './screens/TokenScreen';
-import PayForTableScreen from './screens/PayForTableScreen'; // NEW: Import PayForTableScreen
+import PayForTableScreen from './screens/PayForTableScreen'; // Import PayForTableScreen
 
-// Define the type for your navigation stack parameters
+// Define the type for your navigation stack parameter
 export type RootStackParamList = {
   Welcome: undefined;
   SignUp: undefined;
@@ -51,14 +51,14 @@ export type RootStackParamList = {
   AdminDashboard: undefined;
   UserProfile: undefined;
   TokenScreen: { uid: string; tokenBalance: number };
-  // NEW: Parameters for PayForTableScreen
-  PayForTable: {
+  PayForTable: { // PayForTable now includes currentUserTokenBalance
     tableId: string;
     tableNumber: string | number;
     venueId: string;
     venueName: string;
     perGameCost: number;
-    esp32DeviceId?: string; // Optional, as not all tables might have one
+    esp32DeviceId?: string;
+    currentUserTokenBalance: number; // ADDED: Current user's token balance
   };
 };
 
@@ -122,10 +122,13 @@ const App = (): JSX.Element => {
     }
   }, []);
 
-  const sendFcmTokenToBackend = async (uid: string, token: string, idToken: string) => {
+  const sendFcmTokenToBackend = useCallback(async (uid: string, token: string, idToken: string) => {
     console.log('[FCM_DEBUG] Attempting to send FCM token to backend for user:', uid);
+    const url = `${BACKEND_BASE_URL}/api/user/update-fcm-token`;
+    console.log('[FCM_DEBUG] Sending FCM token to URL:', url);
+
     try {
-      const response = await fetch(`${BACKEND_BASE_URL}/api/user/update-fcm-token`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -133,16 +136,27 @@ const App = (): JSX.Element => {
         },
         body: JSON.stringify({ fcmToken: token }),
       });
+
+      const textResponse = await response.text();
+      console.log('[FCM_DEBUG] Raw backend response:', textResponse);
+
       if (!response.ok) {
-        const errorData = await response.json();
-        console.error('[FCM_DEBUG] Failed to send FCM token to backend:', errorData.message, errorData);
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = JSON.parse(textResponse);
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        } catch (e) {
+          errorMessage = `Server responded with non-JSON error: ${textResponse.substring(0, 200)}...`;
+        }
+        console.error(`[FCM_DEBUG] Failed to send FCM token to backend: ${errorMessage}`);
       } else {
-        console.log('[FCM_DEBUG] FCM token sent to backend successfully.');
+        const data = JSON.parse(textResponse);
+        console.log('[FCM_DEBUG] FCM token sent to backend successfully:', data.message);
       }
     } catch (error) {
       console.error('[FCM_DEBUG] Network error sending FCM token:', error);
     }
-  };
+  }, []);
 
   useEffect(() => {
     console.log('[FCM_DEBUG] Setting up onMessage listener for foreground notifications.');
@@ -343,18 +357,20 @@ const App = (): JSX.Element => {
         }
       });
 
-      socketRef.current.on('tokenBalanceUpdate', (data: { newBalance: number }) => {
+      // --- FIX START ---
+      socketRef.current.on('tokenBalanceUpdate', async (data: { newBalance: number }) => {
         console.log(`[Socket.IO] Received tokenBalanceUpdate event: ${data.newBalance}.`);
-        setUser(prevUser => {
-          if (prevUser) {
-            console.log(`[Socket.IO] Updating user state via tokenBalanceUpdate: Old balance ${prevUser.tokenBalance}, New balance ${data.newBalance}`);
-            const updatedUser = { ...prevUser, tokenBalance: data.newBalance };
-            console.log(`[Socket.IO] User state updated in App.tsx. New user object tokenBalance: ${updatedUser.tokenBalance}`);
-            return updatedUser;
-          }
-          return null;
-        });
+        const currentFirebaseUser = auth().currentUser; // Get the live Firebase user object
+        if (currentFirebaseUser) {
+          // Trigger a full re-sync of the user state to ensure all properties and methods are preserved.
+          // This will re-run fetchUserProfile and re-set the user state with the correct object.
+          console.log(`[Socket.IO] Triggering onAuthStateChanged for user ${currentFirebaseUser.uid} due to tokenBalanceUpdate.`);
+          await onAuthStateChanged(currentFirebaseUser);
+        } else {
+          console.warn('[Socket.IO] tokenBalanceUpdate received but no current Firebase user to update.');
+        }
       });
+      // --- FIX END ---
 
       socketRef.current.on('disconnect', (reason: string) => {
         console.log('[Socket.IO] Disconnected from backend server. Reason:', reason);
@@ -380,7 +396,7 @@ const App = (): JSX.Element => {
       console.log('[Socket.IO Effect] User is null or UID missing. No socket connection attempted.');
     }
     return undefined; // No specific cleanup needed if no connection was established
-  }, [user?.uid]); // DEPEND ONLY ON user.uid to trigger connection/disconnection
+  }, [user?.uid, onAuthStateChanged]); // Added onAuthStateChanged to dependencies
 
 
   async function onGoogleButtonPress(): Promise<void> {
@@ -437,7 +453,7 @@ const App = (): JSX.Element => {
 
   if (initializing || isProfileLoading) {
     return (
-      <View style={styles.container}>
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#0000ff" />
         <Text style={styles.loadingText}>
           {initializing ? 'Loading Firebase authentication...' : 'Fetching user profile...'}
@@ -509,12 +525,24 @@ const App = (): JSX.Element => {
             )}
           </Stack.Screen>
 
-          {/* NEW: PayForTableScreen */}
+          {/* NEW: PayForTableScreen - Now passes currentUserTokenBalance */}
           <Stack.Screen
             name="PayForTable"
-            component={PayForTableScreen}
             options={{ title: 'Pay for Table' }}
-          />
+          >
+            {(props) => (
+              <PayForTableScreen
+                {...props}
+                route={{
+                  ...props.route,
+                  params: {
+                    ...props.route.params,
+                    currentUserTokenBalance: user.tokenBalance ?? 0, // Pass current user's token balance
+                  },
+                }}
+              />
+            )}
+          </Stack.Screen>
 
         </Stack.Navigator>
       </NavigationContainer>

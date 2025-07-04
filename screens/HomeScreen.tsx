@@ -27,7 +27,10 @@ interface Venue {
   name: string;
   address: string;
   numberOfTables?: number;
-  perGameCost?: number; // Added perGameCost
+  perGameCost?: number; // ADDED: perGameCost to Venue interface
+  location?: {
+    coordinates?: number[];
+  };
 }
 
 interface Table {
@@ -65,7 +68,7 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
   const [newVenueLat, setNewVenueLat] = useState<string>('');
   const [newVenueLon, setNewVenueLon] = useState<string>('');
   const [newVenueTablesCount, setNewVenueTablesCount] = useState<string>('');
-  const [newVenuePerGameCost, setNewVenuePerGameCost] = useState<string>('10'); // NEW: perGameCost
+  const [newVenuePerGameCost, setNewVenuePerGameCost] = useState<string>('10'); // NEW: perGameCost with default
   const [isRegisteringVenue, setIsRegisteringVenue] = useState<boolean>(false);
 
   // State for editing specific table
@@ -358,7 +361,7 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
         setEditVenueLat(data[0].location?.coordinates?.[1]?.toFixed(6) || '');
         setEditVenueLon(data[0].location?.coordinates?.[0]?.toFixed(6) || '');
         setEditVenueTablesCount(String(data[0].numberOfTables ?? ''));
-        setEditVenuePerGameCost(String(data[0].perGameCost ?? '10')); // Set perGameCost
+        setEditVenuePerGameCost(String(data[0].perGameCost ?? '10')); // Set perGameCost for editing
       }
       console.log('[API] All venues fetched for admin:', data);
     } catch (error: any) {
@@ -411,7 +414,8 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
       console.log('[FetchTablesForSelectedVenue Debug] Type of user:', typeof user);
       console.log('[FetchTablesForSelectedVenue Debug] Does user have getIdToken?', typeof (user as any).getIdToken); // Cast to any for checking method
       const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${selectedVenueId}/tables`, {
+      // CORRECTED ENDPOINT: Use the /tables-detailed endpoint
+      const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${selectedVenueId}/tables-detailed`, {
         headers: {
           'Authorization': `Bearer ${idToken}`,
         },
@@ -512,10 +516,6 @@ const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendi
       Alert.alert('Success', `Venue "${registeredVenue.name}" registered successfully!`);
       console.log('Registered Venue:', registeredVenue);
 
-      setNewVenueName('');
-      setNewVenueAddress('');
-      setNewVenueTablesCount('');
-      setNewVenuePerGameCost('10'); // Reset perGameCost
       fetchAllVenuesForAdmin();
       fetchNearbyVenues();
     } catch (error: any) {
@@ -1073,7 +1073,7 @@ const styles = StyleSheet.create({
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 2,
+    shadowRadius: 3,
     elevation: 2,
   },
   adminSectionTitle: {

@@ -46,13 +46,21 @@ const TokenScreen: React.FC<TokenScreenProps> = ({ route }) => {
       setLoading(true);
       const currentUser = auth().currentUser;
       if (!currentUser) {
+        console.error('[TokenScreen:fetchPaymentSheetParams] currentUser is null. Cannot fetch ID token.');
         Alert.alert('Authentication Error', 'You are not logged in. Please sign in to make a purchase.');
         setLoading(false);
         return null;
       }
-      const idToken = await currentUser.getIdToken(true);
+      const idToken = await currentUser.getIdToken(true); // Force refresh token
+      console.log(`[TokenScreen:fetchPaymentSheetParams] Fetched ID Token (first 20 chars): ${idToken ? idToken.substring(0, 20) + '...' : 'null'}`);
 
-      const response = await fetch(`${BACKEND_BASE_URL}/api/payments/create-token-payment-intent`, {
+      const url = `${BACKEND_BASE_URL}/api/payments/create-token-payment-intent`;
+      console.log('[TokenScreen:fetchPaymentSheetParams] Requesting payment intent from URL:', url);
+      console.log('[TokenScreen:fetchPaymentSheetParams] Requesting with Authorization Header:', `Bearer ${idToken ? idToken.substring(0, 20) + '...' : 'null'}`);
+      console.log('[TokenScreen:fetchPaymentSheetParams] Request Body:', JSON.stringify({ amountTokens: amountTokens, userId: uid }));
+
+
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -64,12 +72,24 @@ const TokenScreen: React.FC<TokenScreenProps> = ({ route }) => {
         }),
       });
 
+      const textResponse = await response.text(); // Read response as text first
+      console.log('[TokenScreen:fetchPaymentSheetParams] Raw backend response:', textResponse);
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to fetch payment intent.');
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = JSON.parse(textResponse);
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        } catch (e) {
+          // If parsing fails, it's likely not JSON, use raw text or a generic message
+          errorMessage = `Server responded with non-JSON error: ${textResponse.substring(0, 200)}...`;
+        }
+        console.error(`[TokenScreen:fetchPaymentSheetParams] Failed to fetch payment intent: ${errorMessage}`);
+        Alert.alert('Error', `Failed to prepare payment: ${errorMessage}`);
+        return null;
       }
 
-      const { paymentIntent, ephemeralKey, customer, publishableKey } = await response.json();
+      const { paymentIntent, ephemeralKey, customer, publishableKey } = JSON.parse(textResponse); // Parse only if response is OK
 
       return {
         paymentIntent,
@@ -78,7 +98,7 @@ const TokenScreen: React.FC<TokenScreenProps> = ({ route }) => {
         publishableKey,
       };
     } catch (error: any) {
-      console.error('Error fetching payment sheet params:', error);
+      console.error('[TokenScreen:fetchPaymentSheetParams] Unexpected error fetching payment sheet params:', error);
       Alert.alert('Error', `Failed to prepare payment: ${error.message}`);
       return null;
     } finally {
@@ -147,13 +167,21 @@ const TokenScreen: React.FC<TokenScreenProps> = ({ route }) => {
           }),
         });
 
+        const confirmTextResponse = await confirmResponse.text(); // Read as text first
+        console.log('[TokenScreen:buyTokens] Raw backend confirm response:', confirmTextResponse);
+
         if (!confirmResponse.ok) {
-          const errorData = await confirmResponse.json();
-          throw new Error(errorData.message || 'Failed to confirm token purchase on backend.');
+          let errorMessage = `HTTP error! status: ${confirmResponse.status}`;
+          try {
+            const errorData = JSON.parse(confirmTextResponse);
+            errorMessage = errorData.message || errorData.error || errorMessage;
+          } catch (e) {
+            errorMessage = `Server responded with non-JSON error: ${confirmTextResponse.substring(0, 200)}...`;
+          }
+          throw new Error(errorMessage);
         }
 
-        const confirmData = await confirmResponse.json();
-        // setCurrentTokens(confirmData.newBalance); // This is now handled by App.tsx via Socket.IO
+        const confirmData = JSON.parse(confirmTextResponse);
         console.log(`[TokenScreen:buyTokens] Backend confirmed purchase. New balance from backend: ${confirmData.newBalance}`);
         Alert.alert('Success', `Tokens loaded successfully! New balance: ${confirmData.newBalance}`);
 
