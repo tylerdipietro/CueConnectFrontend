@@ -2,931 +2,217 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
-  Button,
-  ActivityIndicator,
   StyleSheet,
-  SafeAreaView,
+  ActivityIndicator,
   FlatList,
-  TextInput,
   Alert,
   TouchableOpacity,
-  ScrollView,
+  SafeAreaView,
 } from 'react-native';
-import { Picker } from '@react-native-picker/picker';
 import * as Location from 'expo-location';
 import { StackScreenProps } from '@react-navigation/stack';
+import { RootStackParamList, Venue, User } from '../types'; // Import User type
 
-// Import the RootStackParamList and User types from App.tsx
-import { RootStackParamList, User } from '../App';
-
-// Import the new HeaderRight component
+// Import the HeaderRight component
 import HeaderRight from '../components/HeaderRight';
 
-interface Venue {
-  _id: string;
-  name: string;
-  address: string;
-  numberOfTables?: number;
-  perGameCost?: number; // ADDED: perGameCost to Venue interface
-  location?: {
-    coordinates?: number[];
-  };
-}
-
-interface Table {
-  _id: string;
-  venueId: string;
-  tableNumber: string | number;
-  esp32DeviceId?: string;
-  status: 'available' | 'occupied' | 'queued' | 'maintenance';
-  currentSessionId?: string;
-  queue: string[];
-}
-
-// Backend base URL
-const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
-
-// Define the props for HomeScreen
+// Define props for HomeScreen
 type HomeScreenProps = StackScreenProps<RootStackParamList, 'Home'> & {
-  user: User;
+  user: User; // User object passed from App.tsx
   signOut: () => Promise<void>;
   pendingNotification: any | null;
   clearPendingNotification: () => void;
 };
 
-// --- HomeScreen Component ---
-const HomeScreen = ({ navigation, user, signOut, pendingNotification, clearPendingNotification }: HomeScreenProps): JSX.Element => {
+const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
 
+const HomeScreen: React.FC<HomeScreenProps> = ({ navigation, user, signOut, pendingNotification, clearPendingNotification }) => {
   const [location, setLocation] = useState<Location.LocationObject | null>(null);
-  const [nearbyVenues, setNearbyVenues] = useState<Venue[]>([]);
-  const [isLoadingLocations, setIsLoadingLocations] = useState<boolean>(true);
-  const [errorMsg, useStateErrorMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [venues, setVenues] = useState<Venue[]>([]);
+  const [isLoadingVenues, setIsLoadingVenues] = useState<boolean>(true);
 
-  // State for new venue registration form
-  const [newVenueName, setNewVenueName] = useState<string>('');
-  const [newVenueAddress, setNewVenueAddress] = useState<string>('');
-  const [newVenueLat, setNewVenueLat] = useState<string>('');
-  const [newVenueLon, setNewVenueLon] = useState<string>('');
-  const [newVenueTablesCount, setNewVenueTablesCount] = useState<string>('');
-  const [newVenuePerGameCost, setNewVenuePerGameCost] = useState<string>('10'); // NEW: perGameCost with default
-  const [isRegisteringVenue, setIsRegisteringVenue] = useState<boolean>(false);
-
-  // State for editing specific table
-  const [allVenues, setAllVenues] = useState<Venue[]>([]);
-  const [tablesForSelectedVenue, setTablesForSelectedVenue] = useState<Table[]>([]);
-  const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
-  const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
-  const [editTableNumber, setEditTableNumber] = useState<string>('');
-  const [editEsp32DeviceId, setEditEsp32DeviceId] = useState<string>('');
-  const [isEditingTable, setIsEditingTable] = useState<boolean>(false);
-  const [isLoadingVenuesForAdmin, setIsLoadingVenuesForAdmin] = useState<boolean>(false);
-  const [isLoadingTablesForEdit, setIsLoadingTablesForEdit] = useState<boolean>(false);
-
-  // State for editing venue details (including perGameCost)
-  const [editVenueName, setEditVenueName] = useState<string>('');
-  const [editVenueAddress, setEditVenueAddress] = useState<string>('');
-  const [editVenueLat, setEditVenueLat] = useState<string>('');
-  const [editVenueLon, setEditVenueLon] = useState<string>('');
-  const [editVenueTablesCount, setEditVenueTablesCount] = useState<string>('');
-  const [editVenuePerGameCost, setEditVenuePerGameCost] = useState<string>(''); // NEW: perGameCost for editing
-  const [isEditingVenue, setIsEditingVenue] = useState<boolean>(false);
-
-
-  // Set header options dynamically
+  // Effect for handling pending notifications
   useEffect(() => {
-    navigation.setOptions({
-      headerShown: true, // Ensure header is shown for HomeScreen
-      title: 'Billiards Hub', // Title for the header
-      headerRight: () => (
-        // Pass the full 'user' object to HeaderRight
-        <HeaderRight currentUser={user} />
-      ),
-      headerStyle: {
-        backgroundColor: '#f5f5f5',
-      },
-      headerTintColor: '#333',
-      headerTitleStyle: {
-        fontWeight: 'bold',
-      },
-    });
-  }, [navigation, user]); // Depend on the entire user object to update header if tokenBalance changes
-
-
-  // Function to handle confirming a win
-  const handleConfirmWin = useCallback(async (data: any) => {
-    if (!user || !user.uid) {
-      Alert.alert('Authentication Error', 'You must be logged in to confirm a win.');
-      return;
-    }
-    console.log('[WinConfirmation] Confirming win with data:', data);
-    console.log('[WinConfirmation Debug] User object before getIdToken (ConfirmWin):', user);
-    console.log('[WinConfirmation Debug] Type of user (ConfirmWin):', typeof user);
-    console.log('[WinConfirmation Debug] Does user have getIdToken (ConfirmWin)?', typeof (user as any).getIdToken); // Cast to any for checking method
-    try {
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${data.tableId}/confirm-win`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          sessionId: data.sessionId,
-          winnerId: data.winnerId,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to confirm win.');
-      }
-      Alert.alert('Success', 'Win confirmed!');
-    } catch (error: any) {
-      console.error('Error confirming win:', error);
-      Alert.alert('Error', `Failed to confirm win: ${error.message}`);
-    } finally {
-      clearPendingNotification();
-    }
-  }, [user, clearPendingNotification]);
-
-  // Function to handle disputing a win
-  const handleDisputeWin = useCallback(async (data: any) => {
-    if (!user || !user.uid) {
-      Alert.alert('Authentication Error', 'You must be logged in to dispute a win.');
-      return;
-    }
-    console.log('[WinConfirmation] Disputing win with data:', data);
-    console.log('[WinConfirmation Debug] User object before getIdToken (DisputeWin):', user);
-    console.log('[WinConfirmation Debug] Type of user (DisputeWin):', typeof user);
-    console.log('[WinConfirmation Debug] Does user have getIdToken (DisputeWin)?', typeof (user as any).getIdToken); // Cast to any for checking method
-    try {
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${data.tableId}/dispute-win`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          sessionId: data.sessionId,
-          disputerId: user.uid,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to dispute win.');
-      }
-      Alert.alert('Success', 'Win dispute submitted.');
-    } catch (error: any) {
-      console.error('Error disputing win:', error);
-      Alert.alert('Error', `Failed to dispute win: ${error.message}`);
-    } finally {
-      clearPendingNotification();
-    }
-  }, [user, clearPendingNotification]);
-
-  useEffect(() => {
-    console.log('[NotificationHandler] HomeScreen useEffect triggered. pendingNotification:', JSON.stringify(pendingNotification, null, 2));
-
+    console.log('[NotificationHandler] HomeScreen useEffect triggered. pendingNotification:', pendingNotification ? 'exists' : 'null');
     if (pendingNotification) {
-      console.log('[NotificationHandler] Raw pendingNotification object:', pendingNotification);
-
-      if (pendingNotification.data?.type === 'win_confirmation') {
-        const { winnerName, venueName, tableNumber } = pendingNotification.data;
-        console.log('[NotificationHandler] Triggering win confirmation alert for:', {
-          winnerName,
-          venueName,
-          tableNumber,
-        });
-
-        Alert.alert(
-          'Win Claimed!',
-          `${winnerName} claims victory on Table ${tableNumber}, confirm or dispute?`,
-          [
-            {
-              text: 'Dispute',
-              onPress: () => handleDisputeWin(pendingNotification.data),
-              style: 'destructive',
-            },
-            {
-              text: 'Confirm',
-              onPress: () => handleConfirmWin(pendingNotification.data),
-              style: 'default',
-            },
-          ],
-          { cancelable: false }
-        );
-      } else {
-        console.log('[NotificationHandler] Handling generic notification:', pendingNotification.notification);
-
-        Alert.alert(
-          pendingNotification.notification?.title || 'New Notification',
-          pendingNotification.notification?.body || 'You have a new message.'
-          // Removed OK button to allow default dismiss behavior
-        );
-      }
+      const { notification, data } = pendingNotification;
+      Alert.alert(
+        notification?.title || 'New Notification',
+        notification?.body || 'You have a new message.',
+        [
+          { text: 'OK', onPress: clearPendingNotification }
+        ]
+      );
     }
-  }, [pendingNotification, clearPendingNotification, handleConfirmWin, handleDisputeWin]);
+  }, [pendingNotification, clearPendingNotification]);
+
+  // Effect for setting header options (including HeaderRight)
+  useEffect(() => {
+    // Only set headerRight if user is available
+    if (user) {
+      console.log('[HomeScreen:useEffect:setOptions] User object for HeaderRight:', JSON.stringify(user, (key, value) => {
+        if (typeof value === 'function') return `[Function: ${key}]`;
+        if (key === 'firebaseAuthUser' && value && typeof value === 'object') {
+          return {
+            uid: value.uid,
+            email: value.email,
+            displayName: value.displayName,
+            getIdToken_exists: typeof value.getIdToken === 'function' ? 'function' : 'no'
+          };
+        }
+        return value;
+      }, 2));
+      navigation.setOptions({
+        headerRight: () => <HeaderRight currentUser={user} />,
+        headerShown: true, // Ensure header is shown
+      });
+    } else {
+      // Clear headerRight if user logs out
+      navigation.setOptions({
+        headerRight: undefined,
+        headerShown: false, // Or keep true if you want a header without the button
+      });
+    }
+  }, [navigation, user]); // Depend on navigation and user
 
 
-  const requestLocationPermissionAndGetLocation = useCallback(async () => {
-    setIsLoadingLocations(true);
-    useStateErrorMsg(null);
-    try {
+  // Effect for location permissions and fetching current location
+  useEffect(() => {
+    (async () => {
+      console.log('[Location] Requesting location permissions...');
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        useStateErrorMsg('Permission to access location was denied. Please enable location services for this app.');
-        setIsLoadingLocations(false);
+        setErrorMsg('Permission to access location was denied');
+        setIsLoadingVenues(false);
+        console.error('[Location] Permission denied:', errorMsg);
         return;
       }
+
+      console.log('[Location] Fetching current location...');
       let currentLocation = await Location.getCurrentPositionAsync({});
       setLocation(currentLocation);
-      console.log('[Location] Current location:', currentLocation.coords);
-      setNewVenueLat(currentLocation.coords.latitude.toFixed(6));
-      setNewVenueLon(currentLocation.coords.longitude.toFixed(6));
-    } catch (error) {
-      console.error('[Location Error]', error);
-      useStateErrorMsg('Failed to get location. Please ensure location services are enabled.');
-    } finally {
-      setIsLoadingLocations(false);
-    }
-  }, []);
+      console.log('[Location] Current location:', currentLocation);
+    })();
+  }, []); // Run once on component mount
 
+  // Effect for fetching nearby venues
   const fetchNearbyVenues = useCallback(async () => {
-    if (!location || !user || !user.uid) { // Ensure user and uid are present
-      console.log('[FetchNearbyVenues Debug] Skipping fetch: location or user not ready.', { location: !!location, user: !!user, userId: user?.uid });
+    console.log(`[HomeScreen Effect] User and location ready. Attempting to fetch nearby venues.`);
+    if (!user || !user.firebaseAuthUser?.uid || !location) {
+      console.log(`[HomeScreen Effect] Skipping fetchNearbyVenues: user or location not ready.`, {
+        userExists: !!user,
+        firebaseAuthUserUidExists: !!user?.firebaseAuthUser?.uid,
+        locationReady: !!location
+      });
+      setIsLoadingVenues(false);
       return;
     }
 
-    setIsLoadingLocations(true);
-    useStateErrorMsg(null);
+    setIsLoadingVenues(true);
+    setErrorMsg(null);
     try {
+      const idToken = await user.firebaseAuthUser.getIdToken(true);
       console.log('[FetchNearbyVenues Debug] User object before getIdToken:', user);
       console.log('[FetchNearbyVenues Debug] Type of user:', typeof user);
-      console.log('[FetchNearbyVenues Debug] Does user have getIdToken?', typeof (user as any).getIdToken); // Cast to any for checking method
-      const idToken = await user.getIdToken(true);
-      console.log('[API] Fetching nearby venues: token retrieved. Length:', idToken.length, 'Starts with:', idToken.substring(0, 10));
+      console.log('[FetchNearbyVenues Debug] Does user.firebaseAuthUser have getIdToken?', typeof user.firebaseAuthUser?.getIdToken === 'function' ? 'function' : 'no');
 
-      const { latitude, longitude } = location.coords;
-      const radiusMiles = 5;
 
-      const backendUrl = `${BACKEND_BASE_URL}/api/venues/nearby?lat=${latitude}&lon=${longitude}&radiusMiles=${radiusMiles}`;
+      const lat = location.coords.latitude;
+      const lon = location.coords.longitude;
+      const radiusMiles = 5; // Example radius
 
-      console.log('[API] Fetching nearby venues from:', backendUrl);
-      const response = await fetch(backendUrl, {
+      console.log(`[API] Fetching nearby venues: token retrieved. Length: ${idToken.length} Starts with: ${idToken.substring(0, 10)}`);
+      const response = await fetch(`${BACKEND_BASE_URL}/api/venues/nearby?lat=${lat}&lon=${lon}&radiusMiles=${radiusMiles}`, {
         headers: {
           'Authorization': `Bearer ${idToken}`,
         },
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        let errorMessage = `HTTP error! status: ${response.status}. Message: ${errorData}`;
-        try {
-            const jsonError = JSON.parse(errorData);
-            errorMessage = jsonError.message || errorMessage;
-        } catch (e) {
-            // Not JSON, use raw text
-        }
-        throw new Error(errorMessage);
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Failed to fetch nearby venues');
       }
 
       const data: Venue[] = await response.json();
-      setNearbyVenues(data);
       console.log('[API] Nearby venues fetched:', data);
-    } catch (error: any) {
-      console.error('[Fetch Venues Error]', error);
-      Alert.alert('Error', `Failed to fetch nearby pool bars: ${error.message || 'Network error'}. Please ensure your backend is running and accessible.`);
-      setNearbyVenues([]);
+      setVenues(data);
+    } catch (err: any) {
+      console.error('Error fetching nearby venues:', err);
+      setErrorMsg(`Failed to load venues: ${err.message}`);
     } finally {
-      setIsLoadingLocations(false);
+      setIsLoadingVenues(false);
     }
-  }, [location, user]); // Depend on user to re-run when user object changes
-
+  }, [user, location]); // Depend on user and location
 
   useEffect(() => {
-    requestLocationPermissionAndGetLocation();
-  }, [requestLocationPermissionAndGetLocation]);
-
-  useEffect(() => {
-    // Only fetch nearby venues if location and user are available and ready
-    if (user && user.uid && location) {
-      fetchNearbyVenues();
-    } else {
-      console.log('[HomeScreen Effect] Skipping fetchNearbyVenues: user or location not ready.', { userReady: !!user?.uid, locationReady: !!location });
-    }
-  }, [fetchNearbyVenues, user, location]); // Depend on fetchNearbyVenues, user, and location
-
-
-  const fetchAllVenuesForAdmin = useCallback(async () => {
-    if (!user?.isAdmin || !user?.uid) { // Ensure user is admin and uid is present
-      console.log('[FetchAllVenuesForAdmin Debug] Skipping fetch: user is not admin or user not ready.', { isAdmin: user?.isAdmin, userId: user?.uid });
-      return;
-    }
-
-    setIsLoadingVenuesForAdmin(true);
-    try {
-      console.log('[FetchAllVenuesForAdmin Debug] User object before getIdToken:', user);
-      console.log('[FetchAllVenuesForAdmin Debug] Type of user:', typeof user);
-      console.log('[FetchAllVenuesForAdmin Debug] Does user have getIdToken?', typeof (user as any).getIdToken); // Cast to any for checking method
-      const idToken = await user.getIdToken(true);
-      console.log('[API] Fetching all venues for admin: token retrieved. Length:', idToken.length, 'Starts with:', idToken.substring(0, 10));
-
-      const response = await fetch(`${BACKEND_BASE_URL}/api/venues`, {
-        headers: {
-          'Authorization': `Bearer ${idToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.text();
-        let errorMessage = `HTTP error! status: ${response.status}. Message: ${errorData}`;
-        try {
-            const jsonError = JSON.parse(errorData);
-            errorMessage = jsonError.message || errorMessage;
-        } catch (e) {
-            // If it's not JSON, the raw text will be used
-        }
-        throw new Error(errorMessage);
-      }
-
-      const data: Venue[] = await response.json();
-      setAllVenues(data);
-      if (data.length > 0 && !selectedVenueId) {
-        setSelectedVenueId(data[0]._id);
-        // Also set initial values for venue edit fields
-        setEditVenueName(data[0].name);
-        setEditVenueAddress(data[0].address);
-        setEditVenueLat(data[0].location?.coordinates?.[1]?.toFixed(6) || '');
-        setEditVenueLon(data[0].location?.coordinates?.[0]?.toFixed(6) || '');
-        setEditVenueTablesCount(String(data[0].numberOfTables ?? ''));
-        setEditVenuePerGameCost(String(data[0].perGameCost ?? '10')); // Set perGameCost for editing
-      }
-      console.log('[API] All venues fetched for admin:', data);
-    } catch (error: any) {
-      console.error('[Fetch All Venues Error]', error);
-      Alert.alert('Error', `Failed to load venues for admin: ${error.message}`);
-      setAllVenues([]);
-    } finally {
-      setIsLoadingVenuesForAdmin(false);
-    }
-  }, [user, selectedVenueId]); // Depend on user to re-run when user object changes
-
-  useEffect(() => {
-    // Only fetch all venues for admin if user is admin and ready
-    if (user?.isAdmin && user?.uid) {
-      fetchAllVenuesForAdmin();
-    } else {
-      console.log('[HomeScreen Effect] Skipping fetchAllVenuesForAdmin: user not admin or not ready.', { isAdmin: user?.isAdmin, userReady: !!user?.uid });
-    }
-  }, [user?.isAdmin, user?.uid, fetchAllVenuesForAdmin]); // Depend on user.isAdmin and user.uid
-
-  // Effect to update venue edit fields when selectedVenueId changes
-  useEffect(() => {
-    if (selectedVenueId) {
-      const venueToEdit = allVenues.find(v => v._id === selectedVenueId);
-      if (venueToEdit) {
-        setEditVenueName(venueToEdit.name);
-        setEditVenueAddress(venueToEdit.address);
-        setEditVenueLat(venueToEdit.location?.coordinates?.[1]?.toFixed(6) || '');
-        setEditVenueLon(venueToEdit.location?.coordinates?.[0]?.toFixed(6) || '');
-        setEditVenueTablesCount(String(venueToEdit.numberOfTables ?? ''));
-        setEditVenuePerGameCost(String(venueToEdit.perGameCost ?? '10')); // Update perGameCost
-      }
-    }
-  }, [selectedVenueId, allVenues]);
-
-
-  const fetchTablesForSelectedVenue = useCallback(async () => {
-    if (!selectedVenueId || !user || !user.uid) { // Ensure user and uid are present
-      setTablesForSelectedVenue([]);
-      setSelectedTableId(null);
-      setEditTableNumber('');
-      setEditEsp32DeviceId('');
-      console.log('[FetchTablesForSelectedVenue Debug] Skipping fetch: selectedVenueId or user not ready.');
-      return;
-    }
-
-    setIsLoadingTablesForEdit(true);
-    try {
-      console.log('[FetchTablesForSelectedVenue Debug] User object before getIdToken:', user);
-      console.log('[FetchTablesForSelectedVenue Debug] Type of user:', typeof user);
-      console.log('[FetchTablesForSelectedVenue Debug] Does user have getIdToken?', typeof (user as any).getIdToken); // Cast to any for checking method
-      const idToken = await user.getIdToken(true);
-      // CORRECTED ENDPOINT: Use the /tables-detailed endpoint
-      const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${selectedVenueId}/tables-detailed`, {
-        headers: {
-          'Authorization': `Bearer ${idToken}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.text();
-        let errorMessage = `HTTP error! status: ${response.status}. Message: ${errorData}`;
-        try {
-            const jsonError = JSON.parse(errorData);
-            errorMessage = jsonError.message || errorMessage;
-        } catch (e) {
-            // Not JSON, use raw text
-        }
-        throw new Error(errorMessage);
-      }
-      const data: Table[] = await response.json();
-      setTablesForSelectedVenue(data);
-      console.log(`[API] Tables fetched for venue ${selectedVenueId}:`, data);
-
-      if (data.length > 0 && !selectedTableId) {
-        setSelectedTableId(data[0]._id);
-      } else if (data.length === 0) {
-        setSelectedTableId(null);
-      }
-    } catch (error: any) {
-      console.error('Error fetching tables for selected venue:', error);
-      Alert.alert('Error', `Failed to load tables for editing: ${error.message}`);
-      setTablesForSelectedVenue([]);
-      setSelectedTableId(null);
-    } finally {
-      setIsLoadingTablesForEdit(false);
-    }
-  }, [selectedVenueId, user, selectedTableId]); // Depend on user to re-run when user object changes
-
-  useEffect(() => {
-    // Only fetch tables if selectedVenueId and user are available and ready
-    if (selectedVenueId && user && user.uid) {
-      fetchTablesForSelectedVenue();
-    } else {
-      console.log('[HomeScreen Effect] Skipping fetchTablesForSelectedVenue: selectedVenueId or user not ready.', { selectedVenueId: selectedVenueId, userReady: !!user?.uid });
-    }
-  }, [fetchTablesForSelectedVenue, selectedVenueId, user]); // Depend on fetchTablesForSelectedVenue, selectedVenueId, and user
-
-
-  useEffect(() => {
-    if (selectedTableId) {
-      const tableToEdit = tablesForSelectedVenue.find(t => t._id === selectedTableId);
-      if (tableToEdit) {
-        setEditTableNumber(String(tableToEdit.tableNumber));
-        setEditEsp32DeviceId(tableToEdit.esp32DeviceId || '');
-      }
-    } else {
-      setEditTableNumber('');
-      setEditEsp32DeviceId('');
-    }
-  }, [selectedTableId, tablesForSelectedVenue]);
-
-
-  const handleRegisterVenue = async () => {
-    if (!user || !user.uid) {
-      Alert.alert('Authentication Error', 'User not authenticated.');
-      return;
-    }
-    if (!newVenueName || !newVenueAddress || !newVenueLat || !newVenueLon || !newVenueTablesCount || isNaN(parseInt(newVenueTablesCount, 10)) || isNaN(parseInt(newVenuePerGameCost, 10))) {
-      Alert.alert('Missing Information', 'Please fill in all venue details, a valid number of tables, and a valid per game cost.');
-      return;
-    }
-
-    setIsRegisteringVenue(true);
-    try {
-      console.log('[HandleRegisterVenue Debug] User object before getIdToken:', user);
-      console.log('[HandleRegisterVenue Debug] Type of user:', typeof user);
-      console.log('[HandleRegisterVenue Debug] Does user have getIdToken?', typeof (user as any).getIdToken); // Cast to any for checking method
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/venues`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          name: newVenueName,
-          address: newVenueAddress,
-          latitude: parseFloat(newVenueLat),
-          longitude: parseFloat(newVenueLon),
-          numberOfTables: parseInt(newVenueTablesCount, 10),
-          perGameCost: parseInt(newVenuePerGameCost, 10), // NEW: Pass perGameCost
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to register venue.');
-      }
-
-      const registeredVenue = await response.json();
-      Alert.alert('Success', `Venue "${registeredVenue.name}" registered successfully!`);
-      console.log('Registered Venue:', registeredVenue);
-
-      fetchAllVenuesForAdmin();
-      fetchNearbyVenues();
-    } catch (error: any) {
-      console.error('Venue registration error:', error);
-      Alert.alert('Registration Failed', `Error: ${error.message}`);
-    } finally {
-      setIsRegisteringVenue(false);
-    }
-  };
-
-  const handleEditVenue = async () => {
-    if (!user || !user.uid || !selectedVenueId) {
-      Alert.alert('Authentication Error', 'User not authenticated or no venue selected.');
-      return;
-    }
-    if (!editVenueName || !editVenueAddress || !editVenueLat || !editVenueLon || !editVenueTablesCount || isNaN(parseInt(editVenueTablesCount, 10)) || isNaN(parseInt(editVenuePerGameCost, 10))) {
-      Alert.alert('Missing Information', 'Please fill in all venue details, a valid number of tables, and a valid per game cost.');
-      return;
-    }
-
-    setIsEditingVenue(true);
-    try {
-      console.log('[HandleEditVenue Debug] User object before getIdToken:', user);
-      console.log('[HandleEditVenue Debug] Type of user:', typeof user);
-      console.log('[HandleEditVenue Debug] Does user have getIdToken?', typeof (user as any).getIdToken);
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${selectedVenueId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          name: editVenueName,
-          address: editVenueAddress,
-          latitude: parseFloat(editVenueLat),
-          longitude: parseFloat(editVenueLon),
-          numberOfTables: parseInt(editVenueTablesCount, 10),
-          perGameCost: parseInt(editVenuePerGameCost, 10), // NEW: Pass perGameCost
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update venue.');
-      }
-
-      const updatedVenue = await response.json();
-      Alert.alert('Success', `Venue "${updatedVenue.name}" updated successfully!`);
-      console.log('Updated Venue:', updatedVenue);
-
-      fetchAllVenuesForAdmin(); // Refresh the list
-      fetchNearbyVenues(); // Refresh nearby venues
-    } catch (error: any) {
-      console.error('Venue update error:', error);
-      Alert.alert('Update Failed', `Error: ${error.message}`);
-    } finally {
-      setIsEditingVenue(false);
-    }
-  };
-
-
-  const handleEditTable = async () => {
-    if (!user || !user.uid) {
-      Alert.alert('Authentication Error', 'User not authenticated.');
-      return;
-    }
-    if (!selectedTableId) {
-      Alert.alert('Selection Error', 'Please select a table to edit.');
-      return;
-    }
-    if (!editTableNumber && !editEsp32DeviceId) {
-      Alert.alert('Input Error', 'Please provide a new table number or ESP32 Device ID.');
-      return;
-    }
-
-    setIsEditingTable(true);
-    try {
-      console.log('[HandleEditTable Debug] User object before getIdToken:', user);
-      console.log('[HandleEditTable Debug] Type of user:', typeof user);
-      console.log('[HandleEditTable Debug] Does user have getIdToken?', typeof (user as any).getIdToken); // Cast to any for checking method
-      const idToken = await user.getIdToken(true);
-      const response = await fetch(`${BACKEND_BASE_URL}/api/tables/${selectedTableId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({
-          tableNumber: editTableNumber,
-          esp32DeviceId: editEsp32DeviceId,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.message || 'Failed to update table.');
-      }
-
-      const updatedTable = await response.json();
-      Alert.alert('Success', `Table "${updatedTable.tableNumber}" updated successfully!`);
-      console.log('Updated Table:', updatedTable);
-
-      fetchTablesForSelectedVenue();
-    } catch (error: any) {
-      console.error('Table update error:', error);
-      Alert.alert('Update Failed', `Error: ${error.message}`);
-    } finally {
-      setIsEditingTable(false);
-    }
-  };
-
+    fetchNearbyVenues();
+  }, [fetchNearbyVenues]);
 
   const renderVenueItem = ({ item }: { item: Venue }) => (
-    <View style={styles.venueItem}>
+    <TouchableOpacity
+      style={styles.venueItem}
+      onPress={() => navigation.navigate('VenueDetail', { venueId: item._id, venueName: item.name })}
+    >
       <Text style={styles.venueName}>{item.name}</Text>
       <Text style={styles.venueAddress}>{item.address}</Text>
-      {item.numberOfTables !== undefined && (
-         <Text style={styles.venueDetails}>Tables: {item.numberOfTables}</Text>
-      )}
       {item.perGameCost !== undefined && (
-         <Text style={styles.venueDetails}>Cost per game: {item.perGameCost} tokens</Text> // Display perGameCost
+        <Text style={styles.venueDetails}>Per Game Cost: {item.perGameCost} tokens</Text>
       )}
-      <Button
-        title="View Location"
-        onPress={() => navigation.navigate('VenueDetail', { venueId: item._id, venueName: item.name })}
-      />
-    </View>
+      <Text style={styles.venueDetails}>Tables: {item.numberOfTables}</Text>
+    </TouchableOpacity>
   );
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollViewContent}>
-        <Text style={styles.title}>Welcome to Billiards Hub, {user?.displayName || user?.email}!</Text>
-        <Text style={styles.subtitle}>Find a pool table near you:</Text>
-        {/* Removed the inline token balance text here as it will be in the header */}
+      <View style={styles.contentContainer}>
+        <Text style={styles.title}>Billiards Hub</Text>
+
+        {/* Welcome Username */}
+        <Text style={styles.welcomeText}>
+          Welcome {user?.firebaseAuthUser?.displayName || 'User'}!
+        </Text>
+
+        {user.isAdmin && (
+          <TouchableOpacity
+            style={styles.adminButton}
+            onPress={() => navigation.navigate('AdminDashboard')}
+          >
+            <Text style={styles.adminButtonText}>Admin Dashboard</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Removed "Load Tokens" button and "Your Tokens" display */}
+        {/* <TouchableOpacity
+          style={styles.tokenButton}
+          onPress={() => navigation.navigate('TokenScreen', { user: { uid: user.firebaseAuthUser.uid, tokenBalance: user.tokenBalance ?? 0 } })}
+        >
+          <Text style={styles.tokenButtonText}>Load Tokens</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.tokenBalanceText}>Your Tokens: {user.tokenBalance ?? 0}</Text> */}
 
 
-        <View style={styles.locationInfoContainer}>
-          {isLoadingLocations ? (
-            <ActivityIndicator size="small" color="#0000ff" />
-          ) : errorMsg ? (
-            <Text style={styles.errorText}>{errorMsg}</Text>
-          ) : location ? (
-            <Text style={styles.locationText}>
-              Your location: Lat {location.coords.latitude.toFixed(4)}, Lon {location.coords.longitude.toFixed(4)}
-            </Text>
-          ) : (
-            <Text style={styles.locationText}>Location not available.</Text>
-          )}
-        </View>
-
-        {isLoadingLocations && nearbyVenues.length === 0 ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#0000ff" />
-            <Text style={styles.loadingText}>Searching for nearby pool bars...</Text>
-          </View>
-        ) : nearbyVenues.length > 0 ? (
-          <>
-            <Text style={styles.sectionTitle}>Pool Bars within 5 miles:</Text>
-            <FlatList
-              data={nearbyVenues}
-              renderItem={renderVenueItem}
-              keyExtractor={item => item._id}
-              contentContainerStyle={styles.venueList}
-              scrollEnabled={false}
-            />
-          </>
+        <Text style={styles.sectionTitle}>Nearby Venues</Text>
+        {isLoadingVenues ? (
+          <ActivityIndicator size="large" color="#0000ff" />
+        ) : errorMsg ? (
+          <Text style={styles.errorText}>{errorMsg}</Text>
+        ) : venues.length > 0 ? (
+          <FlatList
+            data={venues}
+            renderItem={renderVenueItem}
+            keyExtractor={item => item._id}
+            contentContainerStyle={styles.venueList}
+          />
         ) : (
-          <Text style={styles.noVenuesText}>No pool bars found nearby. Try again later or adjust location.</Text>
+          <Text style={styles.infoText}>No venues found near your location.</Text>
         )}
 
-        {/* Admin Panel */}
-        {user?.isAdmin && (
-          <View style={styles.adminPanel}>
-            <Text style={styles.adminPanelTitle}>Admin Panel</Text>
-
-            {/* Register New Venue Section */}
-            <View style={styles.adminSection}>
-              <Text style={styles.adminSectionTitle}>Register New Venue</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Venue Name"
-                value={newVenueName}
-                onChangeText={setNewVenueName}
-                autoCapitalize="words"
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Address"
-                value={newVenueAddress}
-                onChangeText={setNewVenueAddress}
-                autoCapitalize="words"
-              />
-              <View style={styles.rowInputs}>
-                <TextInput
-                  style={[styles.input, styles.halfInput]}
-                  placeholder="Latitude"
-                  value={newVenueLat}
-                  onChangeText={setNewVenueLat}
-                  keyboardType="numeric"
-                />
-                <TextInput
-                  style={[styles.input, styles.halfInput]}
-                  placeholder="Longitude"
-                  value={newVenueLon}
-                  onChangeText={setNewVenueLon}
-                  keyboardType="numeric"
-                />
-              </View>
-              <TextInput
-                style={styles.input}
-                placeholder="Initial Number of Tables (e.g., 5)"
-                value={newVenueTablesCount}
-                onChangeText={setNewVenueTablesCount}
-                keyboardType="numeric"
-              />
-              <TextInput // NEW: perGameCost input
-                style={styles.input}
-                placeholder="Cost per Game (Tokens, e.g., 10)"
-                value={newVenuePerGameCost}
-                onChangeText={setNewVenuePerGameCost}
-                keyboardType="numeric"
-              />
-              <TouchableOpacity
-                style={styles.registerButton}
-                onPress={handleRegisterVenue}
-                disabled={isRegisteringVenue}
-              >
-                {isRegisteringVenue ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.registerButtonText}>Register Venue</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            {/* Edit Specific Venue Section */}
-            <View style={styles.adminSection}>
-              <Text style={styles.adminSectionTitle}>Edit Venue Details</Text>
-              {isLoadingVenuesForAdmin ? (
-                <ActivityIndicator size="small" color="#0000ff" />
-              ) : allVenues.length > 0 ? (
-                <>
-                  <Text style={styles.pickerLabel}>Select Venue to Edit:</Text>
-                  <Picker
-                    selectedValue={selectedVenueId}
-                    onValueChange={(itemValue: string | null) => {
-                      setSelectedVenueId(itemValue);
-                      setSelectedTableId(null); // Reset table selection when venue changes
-                    }}
-                    style={styles.picker}
-                    itemStyle={styles.pickerItem}
-                  >
-                    {allVenues.map((venue) => (
-                      <Picker.Item key={venue._id} label={venue.name} value={venue._id} />
-                    ))}
-                  </Picker>
-
-                  {selectedVenueId && (
-                    <>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Venue Name"
-                        value={editVenueName}
-                        onChangeText={setEditVenueName}
-                        autoCapitalize="words"
-                      />
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Address"
-                        value={editVenueAddress}
-                        onChangeText={setEditVenueAddress}
-                        autoCapitalize="words"
-                      />
-                      <View style={styles.rowInputs}>
-                        <TextInput
-                          style={[styles.input, styles.halfInput]}
-                          placeholder="Latitude"
-                          value={editVenueLat}
-                          onChangeText={setEditVenueLat}
-                          keyboardType="numeric"
-                        />
-                        <TextInput
-                          style={[styles.input, styles.halfInput]}
-                          placeholder="Longitude"
-                          value={editVenueLon}
-                          onChangeText={setEditVenueLon}
-                          keyboardType="numeric"
-                        />
-                      </View>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="Number of Tables (e.g., 5)"
-                        value={editVenueTablesCount}
-                        onChangeText={setEditVenueTablesCount}
-                        keyboardType="numeric"
-                      />
-                      <TextInput // NEW: perGameCost input for editing
-                        style={styles.input}
-                        placeholder="Cost per Game (Tokens, e.g., 10)"
-                        value={editVenuePerGameCost}
-                        onChangeText={setEditVenuePerGameCost}
-                        keyboardType="numeric"
-                      />
-                      <TouchableOpacity
-                        style={styles.registerButton}
-                        onPress={handleEditVenue}
-                        disabled={isEditingVenue}
-                      >
-                        {isEditingVenue ? (
-                          <ActivityIndicator color="#fff" />
-                        ) : (
-                          <Text style={styles.registerButtonText}>Update Venue</Text>
-                        )}
-                      </TouchableOpacity>
-                    </>
-                  )}
-                </>
-              ) : (
-                <Text style={styles.infoText}>No venues available. Register a venue first.</Text>
-              )}
-            </View>
-
-
-            {/* Edit Specific Table Section */}
-            <View style={styles.adminSection}>
-              <Text style={styles.adminSectionTitle}>Edit Specific Table (ESP32 ID)</Text>
-
-              {isLoadingVenuesForAdmin ? (
-                <ActivityIndicator size="small" color="#0000ff" />
-              ) : allVenues.length > 0 ? (
-                <>
-                  <Text style={styles.pickerLabel}>Select Venue for Table:</Text>
-                  <Picker
-                    selectedValue={selectedVenueId}
-                    onValueChange={(itemValue: string | null) => {
-                      setSelectedVenueId(itemValue);
-                      setSelectedTableId(null);
-                    }}
-                    style={styles.picker}
-                    itemStyle={styles.pickerItem}
-                  >
-                    {allVenues.map((venue) => (
-                      <Picker.Item key={venue._id} label={venue.name} value={venue._id} />
-                    ))}
-                  </Picker>
-
-                  {selectedVenueId && (
-                    isLoadingTablesForEdit ? (
-                      <ActivityIndicator size="small" color="#0000ff" style={{ marginTop: 10 }} />
-                    ) : tablesForSelectedVenue.length > 0 ? (
-                      <>
-                        <Text style={styles.pickerLabel}>Select Table:</Text>
-                        <Picker
-                          selectedValue={selectedTableId}
-                          onValueChange={(itemValue: string | null) => setSelectedTableId(itemValue)}
-                          style={styles.picker}
-                          itemStyle={styles.pickerItem}
-                        >
-                          {tablesForSelectedVenue.map((table) => (
-                            <Picker.Item key={table._id} label={`Table ${table.tableNumber} (ID: ${table.esp32DeviceId || 'N/A'})`} value={table._id} />
-                          ))}
-                        </Picker>
-                      </>
-                    ) : (
-                      <Text style={styles.infoText}>No tables found for this venue. Register some first.</Text>
-                    )
-                  )}
-                </>
-              ) : (
-                <Text style={styles.infoText}>No venues available. Register a venue first.</Text>
-              )}
-
-              {selectedTableId && (
-                <>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="New Table Number (e.g., A1, 2)"
-                    value={editTableNumber}
-                    onChangeText={setEditTableNumber}
-                    autoCapitalize="words"
-                  />
-                  <TextInput
-                    style={styles.input}
-                    placeholder="New ESP32 Device ID (Unique Identifier)"
-                    value={editEsp32DeviceId}
-                    onChangeText={setEditEsp32DeviceId}
-                  />
-                  <TouchableOpacity
-                    style={styles.registerButton}
-                    onPress={handleEditTable}
-                    disabled={isEditingTable || !selectedTableId || (!editTableNumber && !editEsp32DeviceId)}
-                  >
-                    {isEditingTable ? (
-                      <ActivityIndicator color="#fff" />
-                    ) : (
-                      <Text style={styles.registerButtonText}>Update Table</Text>
-                    )}
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
-
-          </View>
-        )}
-
-        <View style={styles.buttonContainer}>
-          <Button title="Sign Out" onPress={signOut} />
-        </View>
-      </ScrollView>
+        <TouchableOpacity style={styles.signOutButton} onPress={signOut}>
+          <Text style={styles.signOutButtonText}>Sign Out</Text>
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 };
@@ -936,87 +222,68 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f5f5f5',
   },
-  scrollViewContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  contentContainer: {
+    flex: 1,
     padding: 20,
-    paddingTop: 50,
+    alignItems: 'center',
   },
   title: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
-    marginBottom: 10,
-    textAlign: 'center',
+    marginBottom: 20,
+    color: '#333',
   },
-  subtitle: {
-    fontSize: 16,
-    color: '#666',
+  welcomeText: { // New style for welcome message
+    fontSize: 20,
+    fontWeight: '600',
+    color: '#555',
     marginBottom: 20,
     textAlign: 'center',
   },
-  tokenBalanceText: { // This style is no longer directly used in HomeScreen, but kept for reference
+  adminButton: {
+    backgroundColor: '#007bff',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  adminButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  tokenButton: { // Keep this style in case you want to re-add it later
+    backgroundColor: '#28a745',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginBottom: 10,
+  },
+  tokenButtonText: { // Keep this style in case you want to re-add it later
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  tokenBalanceText: { // Keep this style in case you want to re-add it later
     fontSize: 18,
     fontWeight: '600',
     color: '#007bff',
     marginBottom: 20,
   },
-  googleButton: {
-    width: 192,
-    height: 48,
-    marginTop: 20,
-  },
-  emailText: {
-    fontSize: 18,
-    marginBottom: 10,
-    color: '#333',
-  },
-  profileImage: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    marginTop: 20,
-    marginBottom: 20,
-  },
-  buttonContainer: {
-    marginTop: 20,
-    width: '100%',
-    alignItems: 'center',
-  },
-  locationInfoContainer: {
-    marginTop: 10,
-    marginBottom: 20,
-    alignItems: 'center',
-  },
-  locationText: {
-    fontSize: 14,
-    color: '#555',
-  },
-  errorText: {
-    fontSize: 14,
-    color: 'red',
-    textAlign: 'center',
-  },
-  loadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    flex: 1,
-  },
-  loadingText: {
-    marginTop: 10,
-    fontSize: 16,
-    color: '#666',
-  },
   sectionTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
     marginTop: 20,
     marginBottom: 15,
     color: '#333',
+    alignSelf: 'flex-start',
+    width: '100%',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    paddingBottom: 10,
   },
   venueList: {
     width: '100%',
-    paddingHorizontal: 10,
     paddingBottom: 20,
   },
   venueItem: {
@@ -1046,100 +313,29 @@ const styles = StyleSheet.create({
     color: '#555',
     marginTop: 5,
   },
-  adminPanel: {
-    marginTop: 30,
-    padding: 10,
-    backgroundColor: '#e6f7ff',
-    borderRadius: 10,
-    width: '95%',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#91d5ff',
-    marginBottom: 20,
-  },
-  adminPanelTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#0050b3',
-    textDecorationLine: 'underline',
-  },
-  adminSection: {
-    width: '100%',
-    padding: 15,
-    backgroundColor: '#ffffff',
-    borderRadius: 8,
-    marginBottom: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2,
-  },
-  adminSectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 15,
-    color: '#333',
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    paddingBottom: 10,
-  },
-  input: {
-    width: '100%',
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-    marginBottom: 15,
+  errorText: {
     fontSize: 16,
-    backgroundColor: '#fff',
-  },
-  rowInputs: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginBottom: 15,
-  },
-  halfInput: {
-    width: '48%',
-  },
-  registerButton: {
-    backgroundColor: '#28a745',
-    padding: 15,
-    borderRadius: 8,
-    width: '100%',
-    alignItems: 'center',
-  },
-  registerButtonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  picker: {
-    width: '100%',
-    marginBottom: 15,
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#ccc',
-    borderRadius: 8,
-  },
-  pickerLabel: {
-    fontSize: 16,
-    color: '#555',
-    marginBottom: 5,
-    alignSelf: 'flex-start',
-    marginLeft: 5,
-    fontWeight: '500',
-  },
-  pickerItem: {
-    fontSize: 16,
+    color: 'red',
+    textAlign: 'center',
+    marginTop: 20,
   },
   infoText: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#888',
     textAlign: 'center',
-    marginBottom: 15,
+    marginTop: 20,
+  },
+  signOutButton: {
+    backgroundColor: '#dc3545',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    marginTop: 20,
+  },
+  signOutButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });
 

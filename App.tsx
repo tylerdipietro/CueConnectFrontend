@@ -17,20 +17,23 @@ import { Picker } from '@react-native-picker/picker';
 
 import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
 import messaging from '@react-native-firebase/messaging';
-import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin';
+import { GoogleSignin, GoogleSigninButton, statusCodes } from '@react-native-google-signin/google-signin'; // CORRECTED IMPORT PATH
 import * as Location from 'expo-location';
 
 // Import navigation components
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator, StackScreenProps } from '@react-navigation/stack';
 
-// Import Stripe Provider (RE-INCLUDED)
+// Import Stripe Provider
 import { StripeProvider } from '@stripe/stripe-react-native';
 
 // Import Socket.IO client
 import io from 'socket.io-client';
 
-// Import your screens
+// Import types from the new types.ts file
+import { RootStackParamList, User } from './types';
+
+// Import your screens (ensure these paths are correct relative to App.tsx)
 import WelcomeScreen from './screens/WelcomeScreen';
 import SignUpScreen from './screens/SignUpScreen';
 import LoginScreen from './screens/LoginScreen';
@@ -39,34 +42,14 @@ import VenueDetailScreen from './screens/VenueDetailScreen';
 import AdminDashboardScreen from './screens/AdminDashboardScreen';
 import UserProfileScreen from './screens/UserProfileScreen';
 import TokenScreen from './screens/TokenScreen';
-import PayForTableScreen from './screens/PayForTableScreen'; // Import PayForTableScreen
+import PayForTableScreen from './screens/PayForTableScreen';
 
-// Define the type for your navigation stack parameter
-export type RootStackParamList = {
-  Welcome: undefined;
-  SignUp: undefined;
-  Login: undefined;
-  Home: { user: User; signOut: () => Promise<void>; pendingNotification: any | null; clearPendingNotification: () => void };
-  VenueDetail: { venueId: string; venueName: string };
-  AdminDashboard: undefined;
-  UserProfile: undefined;
-  TokenScreen: { uid: string; tokenBalance: number };
-  PayForTable: { // PayForTable now includes currentUserTokenBalance
-    tableId: string;
-    tableNumber: string | number;
-    venueId: string;
-    venueName: string;
-    perGameCost: number;
-    esp32DeviceId?: string;
-    currentUserTokenBalance: number; // ADDED: Current user's token balance
-  };
-};
+// Import the existing HeaderRight component
+import HeaderRight from './components/HeaderRight';
+
 
 // Create the stack navigator
 const Stack = createStackNavigator<RootStackParamList>();
-
-// Extend the User type to include admin status and token balance
-export type User = (FirebaseAuthTypes.User & { isAdmin?: boolean; tokenBalance?: number; stripeCustomerId?: string }) | null;
 
 // Backend base URL
 const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
@@ -74,7 +57,7 @@ const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
 // --- Main App Component ---
 const App = (): JSX.Element => {
   const [initializing, setInitializing] = useState<boolean>(true);
-  const [user, setUser] = useState<User>(null);
+  const [user, setUser] = useState<User>(null); // Use the new User type
   const [isProfileLoading, setIsProfileLoading] = useState<boolean>(false);
   const [pendingNotification, setPendingNotification] = useState<any | null>(null);
   const isAuthProcessing = useRef(false);
@@ -83,7 +66,7 @@ const App = (): JSX.Element => {
   useEffect(() => {
     GoogleSignin.configure({
       webClientId: '47513412219-hsvcpm1h7f3kusd42sk31i89ilv7lk94.apps.googleusercontent.com',
-      iosClientId: '47513412219-s7h2uea77hgadicf5kti86rl6aifobg9.apps.googleusercontent.com',
+      iosClientId: '47513412219-s7h2uea77hgadicf5kti86rl6aifobg9.googleusercontent.com',
       scopes: ['email', 'profile'],
     });
     console.log('[GoogleSignin] Configured');
@@ -256,64 +239,76 @@ const App = (): JSX.Element => {
     }
   }, []);
 
-  const onAuthStateChanged = useCallback(async (firebaseUser: FirebaseAuthTypes.User | null) => {
-    console.log(`[AUTH_DEBUG_MAIN] onAuthStateChanged invoked. User: ${firebaseUser ? firebaseUser.uid : 'null'}. Initializing: ${initializing}. isAuthProcessing: ${isAuthProcessing.current}`);
+  // Refined onAuthStateChanged to be more robust
+  const onAuthStateChanged = useCallback(async (firebaseUserFromAuthEvent: FirebaseAuthTypes.User | null) => {
+    console.log(`[AUTH_DEBUG_MAIN] onAuthStateChanged invoked. Event user: ${firebaseUserFromAuthEvent ? firebaseUserFromAuthEvent.uid : 'null'}. Initializing: ${initializing}. isAuthProcessing: ${isAuthProcessing.current}`);
 
+    // If already processing, skip to prevent redundant calls/race conditions
     if (isAuthProcessing.current) {
         console.log('[AUTH_DEBUG_MAIN] Already processing an auth state change. Skipping redundant call.');
         return;
     }
 
-    isAuthProcessing.current = true;
+    isAuthProcessing.current = true; // Set flag to indicate processing
 
     try {
-      if (firebaseUser) {
-        console.log('[AUTH_DEBUG_MAIN] User is present. Starting sync, profile fetch and FCM token update.');
+      // Use firebaseUserFromAuthEvent as the primary source for authentication status.
+      // auth().currentUser can be used to get the *latest* instance if needed,
+      // but the event parameter tells us if a user is currently authenticated.
+      const liveFirebaseUser = auth().currentUser;
+
+      if (firebaseUserFromAuthEvent && liveFirebaseUser) { // Ensure both are present
+        console.log('[AUTH_DEBUG_MAIN] Firebase user from auth event and live user are present. Proceeding with sync and profile fetch.');
+        console.log(`[AUTH_DEBUG_MAIN] Live auth().currentUser: ${liveFirebaseUser.uid}`);
 
         // Step 1: Sync user with backend (ensures MongoDB document exists/is updated)
-        const syncedUser = await syncUserWithBackend(firebaseUser);
+        const syncedUser = await syncUserWithBackend(liveFirebaseUser);
         if (!syncedUser) {
           throw new Error('Failed to sync user with backend.');
         }
 
         // Step 2: Fetch full user profile from backend (gets latest tokenBalance, isAdmin, etc.)
-        const profile = await fetchUserProfile(firebaseUser);
+        const profile = await fetchUserProfile(liveFirebaseUser);
         if (!profile) {
           throw new Error('Failed to fetch user profile after sync.');
         }
 
-        // Directly augment the firebaseUser object
-        (firebaseUser as User).isAdmin = profile.isAdmin;
-        (firebaseUser as User).tokenBalance = profile.tokenBalance;
-        (firebaseUser as User).stripeCustomerId = profile.stripeCustomerId;
+        // Create the User object to store in state, explicitly holding the original Firebase user object
+        const userToSet: User = {
+          firebaseAuthUser: liveFirebaseUser, // Store the original Firebase user object
+          isAdmin: profile.isAdmin,
+          tokenBalance: profile.tokenBalance,
+          stripeCustomerId: profile.stripeCustomerId,
+        };
 
-        console.log(`[AUTH_DEBUG_MAIN] Setting user state. New tokenBalance: ${firebaseUser.tokenBalance}`);
-        console.log(`[AUTH_DEBUG_MAIN] Type of firebaseUser before setUser: ${typeof firebaseUser}`);
-        console.log(`[AUTH_DEBUG_MAIN] Does firebaseUser have getIdToken before setUser? ${typeof (firebaseUser as any).getIdToken}`);
+        console.log(`[AUTH_DEBUG_MAIN] Setting user state. New tokenBalance: ${userToSet.tokenBalance}`);
+        console.log(`[AUTH_DEBUG_MAIN] Type of userToSet: ${typeof userToSet}`);
+        console.log(`[AUTH_DEBUG_MAIN] Does userToSet.firebaseAuthUser have getIdToken? ${typeof userToSet.firebaseAuthUser.getIdToken}`);
 
-        setUser(firebaseUser as User); // Set the augmented Firebase User object
+        setUser(userToSet); // Set the new User object
 
         // Step 3: Send FCM token to backend
         const fcmToken = await requestUserPermissionAndGetToken();
         if (fcmToken) {
-          await sendFcmTokenToBackend(firebaseUser.uid, fcmToken, await firebaseUser.getIdToken(true));
+          await sendFcmTokenToBackend(liveFirebaseUser.uid, fcmToken, await liveFirebaseUser.getIdToken(true));
         }
         console.log('[AUTH_DEBUG_MAIN] Profile, FCM, and sync process completed for existing user.');
 
       } else {
-        console.log('[AUTH_DEBUG_MAIN] User is null. Setting user to null.');
+        // If firebaseUserFromAuthEvent is null, it means no user is authenticated.
+        console.log('[AUTH_DEBUG_MAIN] Firebase user from auth event or live user is null. Setting user to null.');
         setUser(null);
       }
     } catch (error) {
       console.error('[AUTH_DEBUG_MAIN] Error during auth state processing:', error);
-      setUser(null);
+      setUser(null); // Ensure user is cleared on error
       Alert.alert('Authentication Error', 'Failed to process authentication. Please try again.');
     } finally {
       if (initializing) {
         setInitializing(false);
         console.log('[AUTH_DEBUG_MAIN] setInitializing(false) called.');
       }
-      isAuthProcessing.current = false;
+      isAuthProcessing.current = false; // Reset flag
       console.log('[AUTH_DEBUG_MAIN] Auth state processing finished. isAuthProcessing set to false.');
     }
   }, [initializing, syncUserWithBackend, fetchUserProfile, requestUserPermissionAndGetToken, sendFcmTokenToBackend]);
@@ -325,52 +320,49 @@ const App = (): JSX.Element => {
       console.log('[AUTH_DEBUG_EFFECT] Cleaning up auth state listener.');
       subscriber();
     };
-  }, [onAuthStateChanged]);
+  }, [onAuthStateChanged]); // Dependency array includes onAuthStateChanged
 
   // Socket.IO connection and listener for token updates
   useEffect(() => {
-    console.log(`[Socket.IO Effect] Running. User: ${user?.uid}, socketRef.current: ${socketRef.current ? 'exists' : 'null'}`);
+    // Check if user (wrapper object) and firebaseAuthUser (actual Firebase object) exist
+    console.log(`[Socket.IO Effect] Running. User: ${user?.firebaseAuthUser?.uid}, socketRef.current: ${socketRef.current ? 'exists' : 'null'}`);
 
-    // Cleanup existing socket connection if it exists
-    if (socketRef.current) {
-      console.log('[Socket.IO Effect] Disconnecting existing socket.');
+    // Cleanup existing socket connection if it exists or if user logs out
+    if (socketRef.current && (!user || !user.firebaseAuthUser?.uid)) {
+      console.log('[Socket.IO Effect] Disconnecting existing socket due to user change or logout.');
+      socketRef.current.emit('leaveVenueRoom', 'global'); // Assuming a global room for user updates
       socketRef.current.disconnect();
       socketRef.current = null;
     }
 
-    // Establish new connection only if user is authenticated AND has a UID
-    if (user?.uid) { // Use optional chaining to safely check user.uid
-      console.log('[Socket.IO Effect] User is present with UID. Attempting to connect new socket for user:', user.uid);
+    // Establish new connection only if user is authenticated AND has a UID AND no socket exists yet
+    if (user?.firebaseAuthUser?.uid && !socketRef.current) {
+      console.log('[Socket.IO Effect] User is present with UID. Attempting to connect new socket for user:', user.firebaseAuthUser.uid);
       socketRef.current = io(BACKEND_BASE_URL, {
         transports: ['websocket'], // Force WebSocket transport
-        // Do NOT pass userId in query here, we will emit 'registerForUpdates' later
       });
 
       socketRef.current.on('connect', () => {
         console.log('[Socket.IO] Connected to backend server:', socketRef.current.id);
-        // IMPORTANT: Only register for updates AFTER connection is established and user.uid is available
-        if (user?.uid) {
-          console.log(`[Socket.IO] Emitting 'registerForUpdates' for user: ${user.uid}`);
-          socketRef.current.emit('registerForUpdates', user.uid);
+        if (user?.firebaseAuthUser?.uid) {
+          console.log(`[Socket.IO] Emitting 'registerForUpdates' for user: ${user.firebaseAuthUser.uid}`);
+          socketRef.current.emit('registerForUpdates', user.firebaseAuthUser.uid);
         } else {
           console.warn('[Socket.IO] User UID not available during connect event, cannot register for updates.');
         }
       });
 
-      // --- FIX START ---
-      socketRef.current.on('tokenBalanceUpdate', async (data: { newBalance: number }) => {
-        console.log(`[Socket.IO] Received tokenBalanceUpdate event: ${data.newBalance}.`);
-        const currentFirebaseUser = auth().currentUser; // Get the live Firebase user object
-        if (currentFirebaseUser) {
-          // Trigger a full re-sync of the user state to ensure all properties and methods are preserved.
-          // This will re-run fetchUserProfile and re-set the user state with the correct object.
-          console.log(`[Socket.IO] Triggering onAuthStateChanged for user ${currentFirebaseUser.uid} due to tokenBalanceUpdate.`);
-          await onAuthStateChanged(currentFirebaseUser);
-        } else {
-          console.warn('[Socket.IO] tokenBalanceUpdate received but no current Firebase user to update.');
-        }
+      // --- MODIFIED: Direct token balance update ---
+      socketRef.current.on('tokenBalanceUpdate', (data: { newBalance: number }) => {
+        console.log(`[Socket.IO] Received tokenBalanceUpdate event: ${data.newBalance}. Directly updating user state.`);
+        setUser(prevUser => {
+          if (prevUser) {
+            return { ...prevUser, tokenBalance: data.newBalance };
+          }
+          return null;
+        });
       });
-      // --- FIX END ---
+      // --- END MODIFIED ---
 
       socketRef.current.on('disconnect', (reason: string) => {
         console.log('[Socket.IO] Disconnected from backend server. Reason:', reason);
@@ -388,15 +380,16 @@ const App = (): JSX.Element => {
       return () => {
         if (socketRef.current) {
           console.log('[Socket.IO Effect Cleanup] Disconnecting socket on unmount/dependency change.');
+          socketRef.current.emit('leaveVenueRoom', 'global'); // Leave global room on cleanup
           socketRef.current.disconnect();
           socketRef.current = null;
         }
       };
     } else {
-      console.log('[Socket.IO Effect] User is null or UID missing. No socket connection attempted.');
+      console.log('[Socket.IO Effect] User is null or UID missing, or socket already exists. No new socket connection attempted.');
     }
     return undefined; // No specific cleanup needed if no connection was established
-  }, [user?.uid, onAuthStateChanged]); // Added onAuthStateChanged to dependencies
+  }, [user?.firebaseAuthUser?.uid]); // Removed onAuthStateChanged from dependencies
 
 
   async function onGoogleButtonPress(): Promise<void> {
@@ -491,11 +484,15 @@ const App = (): JSX.Element => {
           {/* <Stack.Screen name="SignUp" component={SignUpScreen} options={{ headerShown: false }} /> */}
           {/* <Stack.Screen name="Login" component={LoginScreen} options={{ headerShown: false }} /> */}
 
-          <Stack.Screen name="Home" options={{ headerShown: false }}>
+          <Stack.Screen
+            name="Home"
+            // HomeScreen manages its own headerRight, but we need to ensure the header is shown.
+            options={{ headerShown: true }} // Only ensure header is shown, HomeScreen sets its own headerRight
+          >
             {(props) => (
               <HomeScreen
                 {...props}
-                user={user} // Pass the augmented Firebase User object
+                user={user} // Pass the new User object
                 signOut={signOut}
                 pendingNotification={pendingNotification}
                 clearPendingNotification={clearPendingNotification}
@@ -504,23 +501,52 @@ const App = (): JSX.Element => {
           </Stack.Screen>
           <Stack.Screen
             name="VenueDetail"
-            component={VenueDetailScreen}
-            options={({ route }) => ({ title: route.params.venueName || 'Venue Details' })}
-          />
+            options={({ route }) => ({
+              title: route.params.venueName || 'Venue Details',
+              headerRight: () => user && <HeaderRight currentUser={user} />, // Pass currentUser prop
+              headerShown: true // Ensure header is shown for VenueDetailScreen
+            })}
+          >
+            {(props) => (
+              <VenueDetailScreen
+                {...props}
+              />
+            )}
+          </Stack.Screen>
+          {/* Admin Dashboard Screen */}
+          <Stack.Screen
+            name="AdminDashboard"
+            options={{
+              title: 'Admin Dashboard',
+              headerRight: () => user && <HeaderRight currentUser={user} />, // Pass currentUser prop
+              headerShown: true
+            }}
+          >
+            {(props) => (
+              <AdminDashboardScreen
+                {...props}
+                user={user} // Pass the user object to AdminDashboardScreen
+                signOut={signOut}
+              />
+            )}
+          </Stack.Screen>
           {/* Other screens (uncomment and adjust paths as needed) */}
-          {/* <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} /> */}
           {/* <Stack.Screen name="UserProfile" component={UserProfileScreen} /> */}
 
           {/* NEW: TokenScreen */}
           <Stack.Screen
             name="TokenScreen"
-            options={{ title: 'Load Tokens' }}
+            options={{
+              title: 'Load Tokens',
+              headerRight: () => user && <HeaderRight currentUser={user} />, // Pass currentUser prop
+              headerShown: true
+            }}
           >
             {(props) => (
               <TokenScreen
                 {...props}
-                // Pass only serializable uid and tokenBalance
-                user={{ uid: user.uid, tokenBalance: user.tokenBalance ?? 0 }}
+                // Pass the relevant parts of the new User object
+                user={{ uid: user.firebaseAuthUser.uid, tokenBalance: user.tokenBalance ?? 0 }}
               />
             )}
           </Stack.Screen>
@@ -528,7 +554,11 @@ const App = (): JSX.Element => {
           {/* NEW: PayForTableScreen - Now passes currentUserTokenBalance */}
           <Stack.Screen
             name="PayForTable"
-            options={{ title: 'Pay for Table' }}
+            options={{
+              title: 'Pay for Table',
+              headerRight: () => user && <HeaderRight currentUser={user} />, // Pass currentUser prop
+              headerShown: true
+            }}
           >
             {(props) => (
               <PayForTableScreen

@@ -3,8 +3,8 @@ import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, Alert, Activity
 import { StackScreenProps } from '@react-navigation/stack';
 import auth from '@react-native-firebase/auth'; // Import firebase auth
 
-// Import the RootStackParamList type from App.tsx
-import { RootStackParamList } from '../App';
+// Import the RootStackParamList type from types.ts
+import { RootStackParamList } from '../types';
 
 // Define the props for PayForTableScreen
 type PayForTableScreenProps = StackScreenProps<RootStackParamList, 'PayForTable'>;
@@ -81,7 +81,8 @@ const PayForTableScreen = ({ route, navigation }: PayForTableScreenProps): JSX.E
         `You need ${perGameCost} tokens to pay for this table, but you only have ${currentUserTokenBalance}. Please purchase more tokens.`,
         [
           { text: 'Cancel', style: 'cancel' },
-          { text: 'Buy Tokens', onPress: () => navigation.navigate('TokenScreen', { uid: currentUserUid, tokenBalance: currentUserTokenBalance }) }
+          // Pass the new user object structure to TokenScreen
+          { text: 'Buy Tokens', onPress: () => navigation.navigate('TokenScreen', { user: { uid: currentUserUid!, tokenBalance: currentUserTokenBalance } }) }
         ]
       );
       return;
@@ -95,7 +96,9 @@ const PayForTableScreen = ({ route, navigation }: PayForTableScreenProps): JSX.E
       });
 
       Alert.alert('Success', response.message || 'Tokens deducted successfully!');
-      navigation.goBack(); // Go back to VenueDetailScreen
+      // --- MODIFIED: Navigate explicitly to VenueDetailScreen ---
+      navigation.navigate('VenueDetail', { venueId: venueId, venueName: venueName });
+
     } catch (error: any) {
       console.error('Error paying with tokens:', error);
       Alert.alert('Payment Failed', `Could not deduct tokens: ${error.message}`);
@@ -130,7 +133,8 @@ const PayForTableScreen = ({ route, navigation }: PayForTableScreenProps): JSX.E
         {currentUserTokenBalance < perGameCost && (
           <TouchableOpacity
             style={styles.buyTokensButton}
-            onPress={() => navigation.navigate('TokenScreen', { uid: currentUserUid!, tokenBalance: currentUserTokenBalance })}
+            // Pass the new user object structure to TokenScreen
+            onPress={() => navigation.navigate('TokenScreen', { user: { uid: currentUserUid!, tokenBalance: currentUserTokenBalance } })}
             disabled={loading}
           >
             <Text style={styles.buyTokensButtonText}>Buy More Tokens</Text>

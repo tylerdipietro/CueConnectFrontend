@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, FlatList, Alert, Button, SafeAreaView, TouchableOpacity, Modal } from 'react-native';
 import { StackScreenProps } from '@react-navigation/stack';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useIsFocused } from '@react-navigation/native'; // Import useIsFocused
 import auth from '@react-native-firebase/auth';
 import io from 'socket.io-client';
 
-// Import the RootStackParamList and User types from App.tsx
-import { RootStackParamList, User } from '../App';
+// Import the RootStackParamList and User types from types.ts
+import { RootStackParamList, User } from '../types';
 
 type VenueDetailScreenProps = StackScreenProps<RootStackParamList, 'VenueDetail'>;
 
@@ -23,8 +23,6 @@ interface QueueUser {
 interface CurrentPlayers {
   player1Id: string | null;
   player2Id: string | null;
-  // Removed player1DisplayName and player2DisplayName from here
-  // as they are now expected at the root of the Table object via playerDetails
 }
 
 interface PlayerDetails {
@@ -32,9 +30,11 @@ interface PlayerDetails {
   displayName: string;
 }
 
+// IMPORTANT: Updated Table interface to reflect that venueId might be a populated object
+// when received from the backend, but we still expect a string ID for navigation.
 interface Table {
   _id: string;
-  venueId: string; // This should be the venue ID string
+  venueId: string | { _id: string; name: string; /* other venue properties */ }; // Can be string or populated object
   tableNumber: string | number;
   esp32DeviceId?: string;
   status: 'available' | 'occupied' | 'queued' | 'in_play' | 'awaiting_confirmation' | 'maintenance' | 'out_of_order';
@@ -46,9 +46,12 @@ interface Table {
   player2Details?: PlayerDetails; // Added for populated player data
 }
 
+
 const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
   const { venueId, venueName } = route.params;
   const navigation = useNavigation<StackScreenProps<RootStackParamList, 'VenueDetail'>['navigation']>();
+  const isFocused = useIsFocused(); // Hook to check if the screen is currently focused
+
   const [tables, setTables] = useState<Table[]>([]);
   const [isLoadingTables, setIsLoadingTables] = useState<boolean>(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -64,14 +67,18 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
     tableNumber: string | number;
     winnerId: string;
     winnerDisplayName: string;
-    message: string; // Added message to winClaimedDetails
+    message: string;
   } | null>(null);
 
   const socketRef = useRef<any | null>(null);
 
+  console.log(`[VenueDetailScreen-Lifecycle] Rendered for venue: ${venueName} (${venueId}). Focused: ${isFocused}`);
+
   // Effect for Firebase Auth state and user profile fetch
   useEffect(() => {
+    console.log('[VenueDetailScreen-AuthEffect] Setting up auth state listener.');
     const subscriber = auth().onAuthStateChanged(async user => {
+      console.log(`[VenueDetailScreen-AuthEffect] Auth state changed. User: ${user ? user.uid : 'null'}`);
       if (user) {
         setUserAuthUid(user.uid);
         setUserAuthDisplayName(user.displayName || user.email || 'You');
@@ -85,37 +92,43 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
             const profileData = await response.json();
             setIsAdmin(profileData.isAdmin || false);
             setCurrentUserTokenBalance(profileData.tokenBalance ?? 0);
+            console.log(`[VenueDetailScreen-AuthEffect] Profile fetched. isAdmin: ${profileData.isAdmin}, tokenBalance: ${profileData.tokenBalance}`);
           } else {
-            console.warn('[VenueDetailScreen-Auth] Failed to fetch user profile for admin/token check:', response.status);
+            console.warn('[VenueDetailScreen-AuthEffect] Failed to fetch user profile for admin/token check:', response.status);
             setIsAdmin(false);
             setCurrentUserTokenBalance(0);
           }
         } catch (error) {
-          console.error('[VenueDetailScreen-Auth] Error fetching user profile:', error);
+          console.error('[VenueDetailScreen-AuthEffect] Error fetching user profile:', error);
           setIsAdmin(false);
           setCurrentUserTokenBalance(0);
         }
       } else {
+        console.log('[VenueDetailScreen-AuthEffect] User is null. Resetting user states.');
         setUserAuthUid(null);
         setUserAuthDisplayName('You');
         setIsAdmin(false);
         setCurrentUserTokenBalance(0);
       }
     });
-    return subscriber;
+    return () => {
+      console.log('[VenueDetailScreen-AuthEffect] Cleaning up auth state listener.');
+      subscriber();
+    };
   }, []);
 
   // Callback to sync user to backend (used by socket connection)
   const syncUserToBackend = useCallback(async () => {
+      console.log(`[VenueDetailScreen-Sync] Attempting to sync user. userAuthUid: ${userAuthUid}`);
       if (!userAuthUid) {
-        console.warn('[VenueDetailScreen-Sync] No userAuthUid to sync.');
+        console.warn('[VenueDetailScreen-Sync] No userAuthUid to sync. Skipping.');
         return;
       }
 
       try {
         const idToken = await auth().currentUser?.getIdToken(true);
         if (!idToken) {
-          console.error('[VenueDetailScreen-Sync] No ID token available for backend sync.');
+          console.error('[VenueDetailScreen-Sync] No ID token available for backend sync. Skipping.');
           return;
         }
 
@@ -139,13 +152,14 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
       }
     }, [userAuthUid, userAuthDisplayName]);
 
-  // Callback to fetch tables (initial load)
+  // Callback to fetch tables (initial load and re-fetch)
   const fetchTablesForVenue = useCallback(async () => {
+    console.log(`[VenueDetailScreen-Fetch] Initiating fetchTablesForVenue. userAuthUid: ${userAuthUid}, venueId: ${venueId}`);
     setIsLoadingTables(true);
     setErrorMsg(null);
     try {
       if (!userAuthUid) {
-        console.warn('[VenueDetailScreen-Fetch] Skipping initial table fetch: userAuthUid is null.');
+        console.warn('[VenueDetailScreen-Fetch] Skipping initial table fetch: userAuthUid is null. Not authenticated yet?');
         setIsLoadingTables(false);
         return;
       }
@@ -153,6 +167,7 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
       if (!idToken) {
         throw new Error('Failed to get authentication token for fetching tables.');
       }
+      console.log(`[VenueDetailScreen-Fetch] Fetching tables from: ${BACKEND_BASE_URL}/api/venues/${venueId}/tables-detailed`);
 
       const response = await fetch(`${BACKEND_BASE_URL}/api/venues/${venueId}/tables-detailed`, {
         headers: {
@@ -171,12 +186,9 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
       }
 
       const data: Table[] = await response.json();
-      console.log('[VenueDetailScreen-Fetch] Raw data received from tables-detailed (initial fetch):', JSON.stringify(data, null, 2));
-      if (data.length > 0) {
-        console.log(`[VenueDetailScreen-Fetch] First table's perGameCost from initial fetch: ${data[0].perGameCost}, Type: ${typeof data[0].perGameCost}`);
-      }
+      console.log('[VenueDetailScreen-Fetch] Data received from tables-detailed (initial fetch):', JSON.stringify(data, null, 2));
       setTables(data);
-      console.log(`[VenueDetailScreen-Fetch] Tables fetched for venue ${venueName}.`);
+      console.log(`[VenueDetailScreen-Fetch] Tables fetched for venue ${venueName}. Setting isLoadingTables to false.`);
     } catch (error: any) {
       console.error('[VenueDetailScreen-Fetch] Fetch Tables Error:', error);
       setErrorMsg(`Failed to fetch tables: ${error.message || 'Network error'}.`);
@@ -190,61 +202,45 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
   const attachSocketListeners = useCallback((socket: any) => {
     console.log('[VenueDetailScreen-Socket-Listeners] Attaching all Socket.IO listeners.');
 
-    // Generic listener for ALL events - VERY USEFUL FOR DEBUGGING
     socket.onAny((eventName: string, ...args: any[]) => {
       console.log(`[VenueDetailScreen-Socket-ANY] Received event: ${eventName}`, JSON.stringify(args, null, 2));
     });
 
     socket.on('initialVenueState', (data: Table[]) => {
-      console.log('[VenueDetailScreen-Socket-Listeners] Received initialVenueState via socket.');
-      console.log('[VenueDetailScreen-Socket-Listeners] Raw initialVenueState data (socket):', JSON.stringify(data, null, 2));
-      if (data.length > 0) {
-        console.log(`[VenueDetailScreen-Socket-Listeners] First table's perGameCost from initialVenueState (socket): ${data[0].perGameCost}, Type: ${typeof data[0].perGameCost}`);
-      }
+      console.log('[VenueDetailScreen-Socket-Listeners] Received initialVenueState via socket. Updating tables state.');
       setTables(data);
-      console.log('[VenueDetailScreen-Socket-Listeners] Tables state updated from initialVenueState.');
     });
 
     socket.on('queueUpdate', (updatedTable: Table) => {
       console.log(`[VenueDetailScreen-Socket-Listeners] >>> RECEIVED queueUpdate for table ${updatedTable._id}.`);
-      console.log('[VenueDetailScreen-Socket-Listeners] Raw received queueUpdate data:', JSON.stringify(updatedTable, null, 2));
-      console.log(`[VenueDetailScreen-Socket-Listeners] queueUpdate table perGameCost: ${updatedTable.perGameCost}, Type: ${typeof updatedTable.perGameCost}`);
-
       setTables(prevTables => {
         const newTables = prevTables.map(table =>
           table._id === updatedTable._id
             ? updatedTable
             : table
         );
-        console.log('[VenueDetailScreen-Socket-Listeners] Tables state AFTER queueUpdate:', JSON.stringify(newTables, null, 2));
         return newTables;
       });
     });
 
     socket.on('tableStatusUpdate', (updatedTable: Table) => {
       console.log(`[VenueDetailScreen-Socket-Listeners] >>> RECEIVED tableStatusUpdate for table ${updatedTable._id}.`);
-      console.log('[VenueDetailScreen-Socket-Listeners] Raw received tableStatusUpdate data:', JSON.stringify(updatedTable, null, 2));
-      console.log(`[VenueDetailScreen-Socket-Listeners] tableStatusUpdate table perGameCost: ${updatedTable.perGameCost}, Type: ${typeof updatedTable.perGameCost}`);
-
       setTables(prevTables => {
         const newTables = prevTables.map(table =>
           table._id === updatedTable._id ? updatedTable : table
         );
-        console.log('[VenueDetailScreen-Socket-Listeners] Tables state AFTER tableStatusUpdate:', JSON.stringify(newTables, null, 2));
         return newTables;
       });
     });
 
-    // Modified to receive the full data from backend, now emitted to winner directly
     socket.on('winClaimedNotification', (data: {
       tableId: string;
       tableNumber: string | number;
       winnerId: string;
       winnerDisplayName: string;
-      message: string; // Added message field
+      message: string;
     }) => {
-      console.log('[VenueDetailScreen-Socket-Listeners] Received winClaimedNotification.');
-      // Alert.alert('Win Claimed!', data.message); // This alert can be redundant if modal shows
+      console.log('[VenueDetailScreen-Socket-Listeners] Received winClaimedNotification. Showing modal.');
       setClaimedWinDetails(data);
       setWinClaimModalVisible(true);
     });
@@ -270,8 +266,12 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
     });
 
     socket.on('tokenBalanceUpdate', (data: { newBalance: number }) => {
-      console.log(`[VenueDetailScreen-Socket-Listeners] Received tokenBalanceUpdate event: ${data.newBalance}.`);
+      console.log(`[VenueDetailScreen-Socket-Listeners] Received tokenBalanceUpdate event: ${data.newBalance}. Updating local balance.`);
       setCurrentUserTokenBalance(data.newBalance);
+      // IMPORTANT: After token balance updates, re-fetch tables to ensure all UI is consistent
+      // This is crucial if token balance affects player status or table availability.
+      console.log('[VenueDetailScreen-Socket-Listeners] Triggering fetchTablesForVenue after tokenBalanceUpdate.');
+      fetchTablesForVenue(); // Re-fetch all tables to ensure UI is fresh
     });
 
     socket.on('disconnect', (reason: string) => {
@@ -282,75 +282,73 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
       console.error(`[VenueDetailScreen-Socket-Listeners] Socket Connection Error: ${err.message}`);
     });
 
-  }, []); // Empty dependency array for attachSocketListeners, as it only defines the listeners
+  }, [fetchTablesForVenue]); // Dependency on fetchTablesForVenue to ensure it's the latest version
 
   // Effect for Socket.IO connection and management
   useEffect(() => {
-    if (!userAuthUid) {
-      console.log('[VenueDetailScreen-Socket-Main] User UID not available, skipping socket connection setup.');
-      if (socketRef.current) {
-        socketRef.current.emit('leaveVenueRoom', venueId);
-        socketRef.current.disconnect();
-        socketRef.current = null;
-        console.log('[VenueDetailScreen-Socket-Main] Disconnected existing socket due to missing userAuthUid.');
-      }
-      return;
-    }
+    console.log(`[VenueDetailScreen-Socket-Main] Socket effect running. userAuthUid: ${userAuthUid}. Current socketRef: ${socketRef.current ? 'exists' : 'null'}`);
 
-    // Ensure only one socket connection is active
-    if (socketRef.current && socketRef.current.connected) {
-      console.log('[VenueDetailScreen-Socket-Main] Existing socket found and connected, disconnecting for fresh setup.');
+    // Disconnect existing socket if user logs out or component unmounts
+    if (socketRef.current && (!userAuthUid || !isFocused)) { // Added isFocused to disconnect when screen is not active
+      console.log(`[VenueDetailScreen-Socket-Main] Disconnecting existing socket. userAuthUid: ${userAuthUid}, isFocused: ${isFocused}`);
       socketRef.current.emit('leaveVenueRoom', venueId);
       socketRef.current.disconnect();
       socketRef.current = null;
     }
 
-    console.log('[VenueDetailScreen-Socket-Main] Attempting to establish new socket connection...');
-    const socket = io(SOCKET_IO_URL, {
-      transports: ['websocket'],
-      query: { userId: userAuthUid }
-    });
-    socketRef.current = socket;
+    // Establish new connection only if user is authenticated AND screen is focused AND no socket exists yet
+    if (userAuthUid && isFocused && !socketRef.current) {
+      console.log('[VenueDetailScreen-Socket-Main] User is authenticated and screen is focused. Attempting to establish new socket connection...');
+      const socket = io(SOCKET_IO_URL, {
+        transports: ['websocket'],
+        query: { userId: userAuthUid }
+      });
+      socketRef.current = socket;
 
-    attachSocketListeners(socket); // Attach all listeners here
+      attachSocketListeners(socket); // Attach all listeners here
 
-    socket.on('connect', async () => {
-      console.log(`[VenueDetailScreen-Socket-Main] Connected to backend server. Socket ID: ${socket.id}. Socket.connected: ${socket.connected}`);
-      await syncUserToBackend();
-      socket.emit('registerForUpdates', userAuthUid);
-      console.log(`[VenueDetailScreen-Socket-Main] Emitted registerForUpdates for user ${userAuthUid}.`);
-      
-      console.log(`[VenueDetailScreen-Socket-Main] Attempting to join venue room: ${venueId}.`);
-      socket.emit('joinVenueRoom', venueId);
-      console.log(`[VenueDetailScreen-Socket-Main] Emitted joinVenueRoom for venue ${venueId}.`);
-    });
+      socket.on('connect', async () => {
+        console.log(`[VenueDetailScreen-Socket-Main] Connected to backend server. Socket ID: ${socket.id}.`);
+        await syncUserToBackend();
+        socket.emit('registerForUpdates', userAuthUid);
+        console.log(`[VenueDetailScreen-Socket-Main] Emitted registerForUpdates for user ${userAuthUid}.`);
+        
+        console.log(`[VenueDetailScreen-Socket-Main] Attempting to join venue room: ${venueId}.`);
+        socket.emit('joinVenueRoom', venueId);
+        console.log(`[VenueDetailScreen-Socket-Main] Emitted joinVenueRoom for venue ${venueId}.`);
+      });
 
-    socket.on('reconnect', (attemptNumber: number) => {
-      console.log(`[VenueDetailScreen-Socket-Main] Reconnected to backend server on attempt ${attemptNumber}.`);
-      // Re-attach listeners on reconnect to be absolutely sure
-      attachSocketListeners(socket); 
-      socket.emit('joinVenueRoom', venueId);
-      socket.emit('registerForUpdates', userAuthUid);
-      console.log(`[VenueDetailScreen-Socket-Main] Re-emitted joinVenueRoom and registerForUpdates on reconnect.`);
-    });
+      socket.on('reconnect', (attemptNumber: number) => {
+        console.log(`[VenueDetailScreen-Socket-Main] Reconnected to backend server on attempt ${attemptNumber}.`);
+        attachSocketListeners(socket); // Re-attach listeners on reconnect
+        socket.emit('joinVenueRoom', venueId);
+        socket.emit('registerForUpdates', userAuthUid);
+        console.log(`[VenueDetailScreen-Socket-Main] Re-emitted joinVenueRoom and registerForUpdates on reconnect.`);
+      });
+    }
 
-    // Cleanup function: Disconnect socket and remove listeners on component unmount or dependency change
+    // Cleanup function: Disconnect socket on component unmount or dependency change
     return () => {
+      console.log('[VenueDetailScreen-Socket-Main] Cleanup function for socket effect running.');
       if (socketRef.current) {
-        console.log('[VenueDetailScreen-Socket-Main] Running cleanup for socket connection.');
+        console.log('[VenueDetailScreen-Socket-Main] Disconnecting socket during cleanup.');
         socketRef.current.emit('leaveVenueRoom', venueId);
         socketRef.current.disconnect();
         socketRef.current = null;
       }
     };
-  }, [venueId, userAuthUid, syncUserToBackend, attachSocketListeners]);
+  }, [venueId, userAuthUid, syncUserToBackend, attachSocketListeners, isFocused]); // Added isFocused to dependencies
 
-  // Effect to trigger initial table fetch once userAuthUid is available
+  // Effect to trigger initial table fetch once userAuthUid is available AND screen is focused
   useEffect(() => {
-    if (userAuthUid) {
+    console.log(`[VenueDetailScreen-FetchEffect] Running. userAuthUid: ${userAuthUid}, isFocused: ${isFocused}.`);
+    if (userAuthUid && isFocused) {
+      console.log('[VenueDetailScreen-FetchEffect] User authenticated and screen focused. Triggering fetchTablesForVenue.');
       fetchTablesForVenue();
+    } else {
+      console.log('[VenueDetailScreen-FetchEffect] Skipping fetchTablesForVenue. Either userAuthUid is null or screen is not focused.');
     }
-  }, [fetchTablesForVenue, userAuthUid]);
+  }, [fetchTablesForVenue, userAuthUid, isFocused]); // Added isFocused to dependencies
 
 
   const sendAuthenticatedRequest = useCallback(async (path: string, method: string = 'POST', body?: any) => {
@@ -423,10 +421,19 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
         Alert.alert('Error', 'Table cost information is missing or invalid.');
         return;
     }
+
+    // --- CRITICAL FIX HERE ---
+    // Ensure that venueId is always a string ID when navigating.
+    // If table.venueId is a populated object, access its _id.
+    const venueIdToPass = typeof table.venueId === 'object' && table.venueId !== null
+      ? table.venueId._id
+      : table.venueId;
+
+    console.log(`[VenueDetailScreen-Action] Navigating to PayForTable with venueId: ${venueIdToPass} (type: ${typeof venueIdToPass})`);
     navigation.navigate('PayForTable', {
       tableId: table._id,
       tableNumber: table.tableNumber,
-      venueId: table.venueId,
+      venueId: venueIdToPass, // Use the extracted string ID
       venueName: venueName,
       perGameCost: table.perGameCost,
       esp32DeviceId: table.esp32DeviceId,
@@ -540,7 +547,7 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
   };
 
   const renderTableItem = ({ item }: { item: Table }) => {
-    console.log(`[VenueDetailScreen-RenderItem] Table ${item.tableNumber} perGameCost: ${item.perGameCost}, Type: ${typeof item.perGameCost}`);
+    // console.log(`[VenueDetailScreen-RenderItem] Table ${item.tableNumber} perGameCost: ${item.perGameCost}, Type: ${typeof item.perGameCost}`);
     // console.log(`[VenueDetailScreen-RenderItem] Table ${item.tableNumber} full item:`, JSON.stringify(item, null, 2)); // Debug full item
 
     const currentPlayersSafe = item.currentPlayers || { player1Id: null, player2Id: null } as CurrentPlayers;
@@ -701,7 +708,6 @@ const VenueDetailScreen = ({ route }: VenueDetailScreenProps): JSX.Element => {
             <Text style={styles.modalTitle}>Win Claimed!</Text>
             {claimedWinDetails && (
               <Text style={styles.modalText}>
-                {/* Use message from claimedWinDetails for the modal body */}
                 {claimedWinDetails.message}
               </Text>
             )}
@@ -812,10 +818,9 @@ const styles = StyleSheet.create({
   },
   removePlayerButton: {
     backgroundColor: '#ff4d4f',
-    paddingVertical: 4,
     paddingHorizontal: 8,
+    paddingVertical: 4,
     borderRadius: 5,
-    marginLeft: 10,
   },
   removePlayerButtonText: {
     color: '#fff',
@@ -823,8 +828,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   queueInfo: {
-    marginTop: 5,
-    marginBottom: 10,
+    marginTop: 10,
     paddingVertical: 5,
     paddingHorizontal: 10,
     backgroundColor: '#e0f7fa',
@@ -834,35 +838,31 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '500',
     color: '#00796b',
+    marginBottom: 5,
   },
   queuePositionText: {
     fontSize: 14,
     color: '#004d40',
-    marginTop: 3,
+    marginBottom: 5,
   },
   queueListContainer: {
-    marginTop: 8,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#b2ebf2',
+    marginTop: 5,
+    paddingLeft: 10,
   },
   queueListTitle: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#004d40',
-    marginBottom: 4,
+    color: '#00796b',
+    marginBottom: 3,
   },
   queueListItem: {
-    fontSize: 14,
-    color: '#333',
-    marginLeft: 10,
-    marginBottom: 2,
+    fontSize: 13,
+    color: '#004d40',
   },
   tableButtonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginTop: 10,
-    flexWrap: 'wrap',
+    marginTop: 15,
   },
   queueButton: {
     paddingVertical: 10,
@@ -871,26 +871,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     minWidth: 100,
-    marginHorizontal: 2,
-    marginBottom: 5,
-  },
-  joinQueueButton: {
-    backgroundColor: '#17a2b8',
-  },
-  leaveQueueButton: {
-    backgroundColor: '#dc3545',
-  },
-  payButton: {
-    backgroundColor: '#6f42c1',
-  },
-  clearQueueButton: {
-    backgroundColor: '#ffc107',
-    marginLeft: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 4,
   },
   queueButtonText: {
     color: '#fff',
-    fontSize: 14,
     fontWeight: 'bold',
+    fontSize: 14,
+  },
+  payButton: {
+    backgroundColor: '#6f42c1', // Purple for Pay
+  },
+  clearQueueButton: {
+    backgroundColor: '#dc3545', // Red for Clear Queue
   },
   centeredView: {
     flex: 1,
@@ -914,28 +910,28 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   modalTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: 'bold',
     marginBottom: 15,
     textAlign: 'center',
   },
   modalText: {
-    marginBottom: 20,
+    marginBottom: 15,
     textAlign: 'center',
     fontSize: 16,
   },
   modalButtonContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'space-around',
     width: '100%',
   },
   modalButton: {
     borderRadius: 10,
     padding: 10,
     elevation: 2,
-    flex: 1,
-    marginHorizontal: 5,
+    minWidth: 100,
     alignItems: 'center',
+    marginHorizontal: 5,
   },
   modalButtonConfirm: {
     backgroundColor: '#28a745',
@@ -949,4 +945,5 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+
 export default VenueDetailScreen;

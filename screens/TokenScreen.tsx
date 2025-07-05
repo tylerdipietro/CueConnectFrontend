@@ -11,18 +11,20 @@ import {
 } from 'react-native';
 import { useStripe } from '@stripe/stripe-react-native';
 import { StackScreenProps } from '@react-navigation/stack';
-import { RootStackParamList } from '../App'; // Adjust path if App.tsx is not in root
+import { RootStackParamList } from '../types'; // Import RootStackParamList from types.ts
 import auth from '@react-native-firebase/auth'; // Import Firebase auth
 
 // Define the props for TokenScreen
+// The 'TokenScreen' in RootStackParamList now expects a 'user' object
 type TokenScreenProps = StackScreenProps<RootStackParamList, 'TokenScreen'>;
 
 // Backend base URL (should be the same as in App.tsx)
 const BACKEND_BASE_URL = 'https://api.tylerdipietro.com';
 
 const TokenScreen: React.FC<TokenScreenProps> = ({ route }) => {
-  // Destructure uid and tokenBalance directly from route.params
-  const { uid, tokenBalance } = route.params;
+  // Destructure uid and tokenBalance from route.params.user
+  const { user: { uid, tokenBalance } } = route.params; // Access nested user object
+
   const { initPaymentSheet, presentPaymentSheet } = useStripe();
 
   const [loading, setLoading] = useState(false);
@@ -30,7 +32,7 @@ const TokenScreen: React.FC<TokenScreenProps> = ({ route }) => {
   const [currentTokens, setCurrentTokens] = useState<number>(tokenBalance);
 
   // Debugging log for initial render
-  console.log(`[TokenScreen] Initial render. route.params.tokenBalance: ${tokenBalance}, currentTokens state: ${currentTokens}`);
+  console.log(`[TokenScreen] Initial render. route.params.user.tokenBalance: ${tokenBalance}, currentTokens state: ${currentTokens}`);
 
   // Use an effect to update currentTokens if the prop changes (e.g., after a successful purchase
   // and App.tsx updates its state, which then re-renders TokenScreen with new route.params)
